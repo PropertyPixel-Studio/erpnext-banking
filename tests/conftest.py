@@ -1,4 +1,5 @@
 """Pytest config — keeps Frappe out of pure-Python unit tests."""
+
 import sys
 from unittest.mock import MagicMock
 

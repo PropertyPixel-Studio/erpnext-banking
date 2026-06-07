@@ -1,4 +1,5 @@
 """Provider registry. Add new providers to ALL_PROVIDERS."""
+
 from .base import BankProvider
 from .fio import FioProvider
 

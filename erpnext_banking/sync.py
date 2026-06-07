@@ -7,6 +7,7 @@ Provider-agnostic: takes any BankProvider implementation. Runs in two modes:
 
 Per-transaction commit. Failed inserts go through with_retries (3 rounds, 1/3/9 s).
 """
+
 from __future__ import annotations
 
 import time
@@ -38,14 +39,16 @@ def run_for_provider(
 	"""Run one sync cycle for one provider. Returns summary dict."""
 	settings = frappe.get_single(provider.settings_doctype)
 	start = time.monotonic()
-	log = frappe.get_doc({
-		"doctype": "Bank Sync Log",
-		"sync_dt": now_datetime(),
-		"provider": provider.name,
-		"trigger": trigger,
-		"bank_account": settings.bank_account,
-		"status": "Running",
-	})
+	log = frappe.get_doc(
+		{
+			"doctype": "Bank Sync Log",
+			"sync_dt": now_datetime(),
+			"provider": provider.name,
+			"trigger": trigger,
+			"bank_account": settings.bank_account,
+			"status": "Running",
+		}
+	)
 	log.insert(ignore_permissions=True)
 	frappe.db.commit()
 
@@ -138,13 +141,15 @@ def _attempt_insert(ctx: _RunContext, raw: dict, round_no: int = 0) -> bool:
 		ctx.log.created = (ctx.log.created or 0) + 1
 		return True
 
-	bt = frappe.get_doc({
-		"doctype": "Bank Transaction",
-		**kwargs,
-		"bank_account": ctx.settings.bank_account,
-		"company": ctx.settings.company,
-		"status": "Unreconciled",
-	})
+	bt = frappe.get_doc(
+		{
+			"doctype": "Bank Transaction",
+			**kwargs,
+			"bank_account": ctx.settings.bank_account,
+			"company": ctx.settings.company,
+			"status": "Unreconciled",
+		}
+	)
 	_try_attach_supplier(bt, raw, ctx.provider)
 	bt.insert(ignore_permissions=True)
 	bt.submit()
@@ -160,10 +165,12 @@ def _attempt_insert(ctx: _RunContext, raw: dict, round_no: int = 0) -> bool:
 
 def _is_already_inserted(ctx: _RunContext, raw: dict) -> bool:
 	tx_id = str(ctx.provider.to_bank_transaction(raw)["transaction_id"])
-	return bool(frappe.db.exists(
-		"Bank Transaction",
-		{"transaction_id": tx_id, "bank_account": ctx.settings.bank_account},
-	))
+	return bool(
+		frappe.db.exists(
+			"Bank Transaction",
+			{"transaction_id": tx_id, "bank_account": ctx.settings.bank_account},
+		)
+	)
 
 
 def _try_attach_supplier(bt, raw: dict, provider) -> None:

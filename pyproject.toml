@@ -10,7 +10,15 @@ dynamic = ["version", "dependencies"]
 [tool.ruff]
 line-length = 110
 target-version = "py310"
+# Frappe convention: tabs in Python (matches .editorconfig and reference jira app)
+indent-width = 4
+
+[tool.ruff.format]
+indent-style = "tab"
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I"]
-ignore = ["E501"]
+select = ["E", "F", "I"]
+# E501: line length handled by formatter
+# W191: tabs are intentional (Frappe convention)
+# E101: docstring continuation lines use tab + spaces alignment, which trips this check
+ignore = ["E501", "W191", "E101"]

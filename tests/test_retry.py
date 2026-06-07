@@ -1,11 +1,11 @@
 """Tests for generic with_retries harness."""
-from unittest.mock import MagicMock
 
-import pytest
+from unittest.mock import MagicMock
 
 
 def test_with_retries_success_first_pass(monkeypatch):
 	from erpnext_banking._retry import with_retries
+
 	monkeypatch.setattr("time.sleep", lambda s: None)
 	attempt = MagicMock(return_value=True)
 	failed = with_retries([1, 2, 3], attempt)
@@ -15,6 +15,7 @@ def test_with_retries_success_first_pass(monkeypatch):
 
 def test_with_retries_one_round_to_succeed(monkeypatch):
 	from erpnext_banking._retry import with_retries
+
 	monkeypatch.setattr("time.sleep", lambda s: None)
 	attempts = {1: 0, 2: 0}
 
@@ -31,9 +32,12 @@ def test_with_retries_one_round_to_succeed(monkeypatch):
 
 def test_with_retries_gives_up_after_3_rounds(monkeypatch):
 	from erpnext_banking._retry import with_retries
+
 	monkeypatch.setattr("time.sleep", lambda s: None)
+
 	def attempt(item):
 		raise RuntimeError("permanent")
+
 	failed = with_retries([1], attempt)
 	assert len(failed) == 1
 	assert failed[0][0] == 1
@@ -42,12 +46,15 @@ def test_with_retries_gives_up_after_3_rounds(monkeypatch):
 
 def test_dedup_check_short_circuits_retry(monkeypatch):
 	from erpnext_banking._retry import with_retries
+
 	monkeypatch.setattr("time.sleep", lambda s: None)
 
 	calls = {"attempt": 0, "dedup": 0}
+
 	def attempt(item):
 		calls["attempt"] += 1
 		raise RuntimeError("nope")
+
 	def dedup(item):
 		calls["dedup"] += 1
 		return True
@@ -60,6 +67,7 @@ def test_dedup_check_short_circuits_retry(monkeypatch):
 
 def test_backoff_sleeps_called_with_correct_values(monkeypatch):
 	from erpnext_banking._retry import with_retries
+
 	sleeps = []
 	monkeypatch.setattr("time.sleep", lambda s: sleeps.append(s))
 
@@ -72,6 +80,7 @@ def test_backoff_sleeps_called_with_correct_values(monkeypatch):
 
 def test_custom_rounds_and_backoff(monkeypatch):
 	from erpnext_banking._retry import with_retries
+
 	sleeps = []
 	monkeypatch.setattr("time.sleep", lambda s: sleeps.append(s))
 	with_retries([1], lambda i: (_ for _ in ()).throw(RuntimeError()), rounds=2, backoff=(5, 10))
@@ -81,6 +90,7 @@ def test_custom_rounds_and_backoff(monkeypatch):
 def test_with_retries_round_aware_callback(monkeypatch):
 	"""attempt_fn receives (item, round_no) where round_no=0 is main pass, 1+ is retry."""
 	from erpnext_banking._retry import with_retries
+
 	monkeypatch.setattr("time.sleep", lambda s: None)
 	calls = []
 

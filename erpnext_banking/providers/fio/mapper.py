@@ -1,4 +1,5 @@
 """Map Fio raw record (column-coded dict) → Bank Transaction kwargs."""
+
 from __future__ import annotations
 
 from datetime import date, datetime

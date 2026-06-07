@@ -4,6 +4,7 @@ API reference: https://www.fio.cz/docs/cz/API_Bankovnictvi.pdf
 Rate limit: 1 request per 30 s per token (we don't retry inside this class —
 upper layer decides retry strategy by error type).
 """
+
 from datetime import date
 
 import requests
@@ -32,9 +33,7 @@ class FioClient:
 	def fetch_period(self, date_from: date, date_to: date) -> dict:
 		"""GET /periods/{token}/{from}/{to}/transactions.json — does NOT move pointer."""
 		path = (
-			f"/periods/{self._token}"
-			f"/{date_from.isoformat()}/{date_to.isoformat()}"
-			"/transactions.json"
+			f"/periods/{self._token}" f"/{date_from.isoformat()}/{date_to.isoformat()}" "/transactions.json"
 		)
 		return self._get(path)
 
@@ -47,9 +46,7 @@ class FioClient:
 		url = self.BASE + path
 		masked = mask_token(path)
 		try:
-			r = requests.get(
-				url, timeout=self._timeout, headers={"Accept": "application/json"}
-			)
+			r = requests.get(url, timeout=self._timeout, headers={"Accept": "application/json"})
 		except requests.RequestException as e:
 			raise FioApiError(0, str(e), masked) from e
 

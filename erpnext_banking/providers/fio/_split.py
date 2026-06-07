@@ -4,6 +4,7 @@ Escalation: full → halves(2) → thirds(3) → fifths(5). If a leaf still 413,
 on that slice, log warning, return whatever we collected. Sync layer marks the
 Bank Sync Log as Partial.
 """
+
 import logging
 from datetime import date, timedelta
 
@@ -26,20 +27,14 @@ def slice_dates(date_from: date, date_to: date, parts: int) -> list[tuple[date, 
 	chunks: list[tuple[date, date]] = []
 	cursor = date_from
 	for i in range(parts):
-		end = (
-			date_to
-			if i == parts - 1
-			else date_from + timedelta(days=int(round(step * (i + 1))))
-		)
+		end = date_to if i == parts - 1 else date_from + timedelta(days=int(round(step * (i + 1))))
 		# ensure non-overlap: next chunk starts day after end
 		chunks.append((cursor, end))
 		cursor = end + timedelta(days=1)
 	return chunks
 
 
-def fetch_with_escalation(
-	client, date_from: date, date_to: date
-) -> list[dict]:
+def fetch_with_escalation(client, date_from: date, date_to: date) -> list[dict]:
 	"""Fetch /periods/ with 413 escalation 2 → 3 → 5. Returns flat transaction list."""
 	return _fetch_recursive(client, date_from, date_to, escalation_level=0)
 
@@ -56,7 +51,8 @@ def _fetch_recursive(client, date_from: date, date_to: date, escalation_level: i
 			# exhausted 2 → 3 → 5 escalation; give up on this slice
 			logger.warning(
 				"Fio slice %s–%s > 50k records even at /5 split, skipping",
-				date_from, date_to,
+				date_from,
+				date_to,
 			)
 			return []
 		parts = _ESCALATION_PARTS[escalation_level]

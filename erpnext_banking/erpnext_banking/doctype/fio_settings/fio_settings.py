@@ -3,6 +3,7 @@
 Validation only here. Tlačítka volají whitelisted methods v erpnext_banking.api
 (viz Task 21). Client script v fio_settings.js (Task 22).
 """
+
 import frappe
 from frappe import _
 from frappe.model.document import Document

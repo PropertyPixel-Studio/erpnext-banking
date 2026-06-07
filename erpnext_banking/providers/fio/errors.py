@@ -1,6 +1,6 @@
 """Fio API error class hierarchy + token masking for logs."""
-import re
 
+import re
 
 _TOKEN_PATTERN = re.compile(r"/[a-zA-Z0-9]{40,}/")
 

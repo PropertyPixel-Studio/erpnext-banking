@@ -13,6 +13,7 @@ Hard rules (spec §4):
 - Minimum 2 matching signals for outgoing — never amount alone.
 - Any ambiguity → leave Unreconciled, manual via Bank Reconciliation Tool.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -189,7 +190,9 @@ def _try_pay_and_reconcile(bt, dt: str, dn: str, amount: float) -> ReconcileResu
 		return ReconcileResult(errors=1)
 
 
-def _create_payment_entry_and_reconcile(bt, reference_doctype: str, reference_name: str, amount: float) -> None:
+def _create_payment_entry_and_reconcile(
+	bt, reference_doctype: str, reference_name: str, amount: float
+) -> None:
 	"""Create Payment Entry against the reference and attach to BT.payment_entries.
 
 	Uses stock helper `get_payment_entry` from erpnext.accounts.doctype.payment_entry.
@@ -208,11 +211,14 @@ def _create_payment_entry_and_reconcile(bt, reference_doctype: str, reference_na
 	pe.insert(ignore_permissions=True)
 	pe.submit()
 
-	bt.append("payment_entries", {
-		"payment_document": "Payment Entry",
-		"payment_entry": pe.name,
-		"allocated_amount": amount,
-	})
+	bt.append(
+		"payment_entries",
+		{
+			"payment_document": "Payment Entry",
+			"payment_entry": pe.name,
+			"allocated_amount": amount,
+		},
+	)
 	bt.save(ignore_permissions=True)
 	frappe.db.commit()
 
@@ -246,7 +252,8 @@ def reconcile_for_provider(provider_name: str) -> dict:
 
 
 def _rematch_provider(provider, settings) -> ReconcileResult:
-	from frappe.utils import add_days, today as _today
+	from frappe.utils import add_days
+	from frappe.utils import today as _today
 
 	window_start = add_days(_today(), -int(settings.reconcile_window_days or 90))
 	candidates = frappe.get_all(
@@ -306,8 +313,7 @@ def on_payment_request_submit(doc, method=None):
 def _try_immediate_match_by_vs(vs: str, invoice_doctype: str) -> None:
 	"""Find Unreconciled BT(s) with reference_number==vs in the correct direction, reconcile."""
 	direction_filter = (
-		{"deposit": (">", 0)} if invoice_doctype == "Sales Invoice"
-		else {"withdrawal": (">", 0)}
+		{"deposit": (">", 0)} if invoice_doctype == "Sales Invoice" else {"withdrawal": (">", 0)}
 	)
 	candidates = frappe.get_all(
 		"Bank Transaction",

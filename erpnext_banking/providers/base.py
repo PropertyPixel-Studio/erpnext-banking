@@ -1,4 +1,5 @@
 """Provider-agnostic abstract base for bank integrations."""
+
 from abc import ABC, abstractmethod
 from datetime import date
 

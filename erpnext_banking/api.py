@@ -3,6 +3,7 @@
 All endpoints require System Manager or Accounts Manager role.
 Manual sync triggers include a 35-second throttle (Fio rate limit guard).
 """
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -12,7 +13,6 @@ from frappe import _
 
 from .reconcile import reconcile_for_provider
 from .sync import run_for_provider
-
 
 THROTTLE_SECONDS = 35
 
@@ -32,14 +32,14 @@ def _check_throttle(provider_name: str):
 	if delta < THROTTLE_SECONDS:
 		retry_after = int(THROTTLE_SECONDS - delta) + 1
 		frappe.throw(
-			_("Rate limited: please wait {0} more seconds before triggering Fio again.")
-			.format(retry_after),
+			_("Rate limited: please wait {0} more seconds before triggering Fio again.").format(retry_after),
 			title=_("Throttled"),
 		)
 
 
 def _get_provider(provider_name: str):
 	from .providers import ALL_PROVIDERS
+
 	for cls in ALL_PROVIDERS:
 		if cls.name == provider_name:
 			return cls()
@@ -89,6 +89,7 @@ def fio_reset_pointer(transaction_id: str) -> dict:
 	"""
 	frappe.only_for(["System Manager"])
 	from .providers.fio import FioProvider
+
 	provider = FioProvider()
 	provider._client().set_last_id(str(transaction_id))
 	return {"status": "OK", "transaction_id": transaction_id}
