@@ -76,3 +76,22 @@ def test_custom_rounds_and_backoff(monkeypatch):
 	monkeypatch.setattr("time.sleep", lambda s: sleeps.append(s))
 	with_retries([1], lambda i: (_ for _ in ()).throw(RuntimeError()), rounds=2, backoff=(5, 10))
 	assert sleeps == [5, 10]
+
+
+def test_with_retries_round_aware_callback(monkeypatch):
+	"""attempt_fn receives (item, round_no) where round_no=0 is main pass, 1+ is retry."""
+	from erpnext_banking._retry import with_retries
+	monkeypatch.setattr("time.sleep", lambda s: None)
+	calls = []
+
+	def attempt(item, round_no):
+		calls.append((item, round_no))
+		if round_no == 0 and item == "fail-once":
+			raise RuntimeError("transient")
+		return True
+
+	failed = with_retries(["ok", "fail-once"], attempt, round_aware=True)
+	assert failed == []
+	assert ("ok", 0) in calls
+	assert ("fail-once", 0) in calls
+	assert ("fail-once", 1) in calls

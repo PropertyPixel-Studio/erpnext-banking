@@ -57,8 +57,9 @@ def run_for_provider(
 
 		failed = with_retries(
 			raw_list,
-			lambda raw: _attempt_insert(ctx, raw),
+			lambda raw, round_no: _attempt_insert(ctx, raw, round_no),
 			dedup_check=lambda raw: _is_already_inserted(ctx, raw),
+			round_aware=True,
 		)
 
 		log.retried = len(failed) + (log.retried_succeeded or 0)
@@ -121,11 +122,16 @@ def _to_date(d) -> _date:
 	return frappe.utils.getdate(d)
 
 
-def _attempt_insert(ctx: _RunContext, raw: dict) -> bool:
+def _attempt_insert(ctx: _RunContext, raw: dict, round_no: int = 0) -> bool:
 	"""Map → dedup-check → insert+submit BT. Mutates ctx.log counters."""
 	kwargs = ctx.provider.to_bank_transaction(raw)
 	if _is_already_inserted(ctx, raw):
-		ctx.log.skipped_duplicates = (ctx.log.skipped_duplicates or 0) + 1
+		if round_no == 0:
+			ctx.log.skipped_duplicates = (ctx.log.skipped_duplicates or 0) + 1
+		else:
+			# dedup hit in retry round means a previous attempt actually committed
+			ctx.log.created = (ctx.log.created or 0) + 1
+			ctx.log.retried_succeeded = (ctx.log.retried_succeeded or 0) + 1
 		return True
 
 	if ctx.dry_run:
@@ -147,6 +153,8 @@ def _attempt_insert(ctx: _RunContext, raw: dict) -> bool:
 	frappe.db.commit()
 
 	ctx.log.created = (ctx.log.created or 0) + 1
+	if round_no > 0:
+		ctx.log.retried_succeeded = (ctx.log.retried_succeeded or 0) + 1
 	return True
 
 

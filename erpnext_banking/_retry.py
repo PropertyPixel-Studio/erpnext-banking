@@ -12,13 +12,16 @@ from typing import Any
 
 def with_retries(
 	items: Iterable[Any],
-	attempt_fn: Callable[[Any], bool],
+	attempt_fn: Callable[..., bool],
 	*,
 	dedup_check: Callable[[Any], bool] | None = None,
 	rounds: int = 3,
 	backoff: tuple[int, ...] = (1, 3, 9),
+	round_aware: bool = False,
 ) -> list[tuple[Any, BaseException]]:
-	"""Try `attempt_fn(item)` for each item, retry failures up to `rounds` times.
+	"""Try `attempt_fn(item)` (or `attempt_fn(item, round_no)` if round_aware).
+
+	round_no = 0 for the main pass, 1..rounds for retry rounds.
 
 	Args:
 	    items: iterable of items to process.
@@ -27,6 +30,7 @@ def with_retries(
 	                 already succeeded (e.g. partial commit from previous attempt).
 	    rounds: number of retry rounds after the main pass (default 3).
 	    backoff: sleep seconds per round, indexed by attempt-1.
+	    round_aware: if True, attempt_fn receives (item, round_no) instead of just item.
 
 	Returns:
 	    List of (item, last_exception) for items still failing after all rounds.
@@ -34,12 +38,15 @@ def with_retries(
 	if len(backoff) < rounds:
 		raise ValueError(f"backoff has {len(backoff)} values, need at least {rounds}")
 
+	def _call(item, round_no):
+		return attempt_fn(item, round_no) if round_aware else attempt_fn(item)
+
 	failed: list[tuple[Any, BaseException]] = []
 
 	# Main pass
 	for item in items:
 		try:
-			attempt_fn(item)
+			_call(item, 0)
 		except BaseException as e:
 			failed.append((item, e))
 
@@ -53,7 +60,7 @@ def with_retries(
 			if dedup_check and dedup_check(item):
 				continue
 			try:
-				attempt_fn(item)
+				_call(item, attempt)
 			except BaseException as e:
 				next_failed.append((item, e))
 		failed = next_failed
