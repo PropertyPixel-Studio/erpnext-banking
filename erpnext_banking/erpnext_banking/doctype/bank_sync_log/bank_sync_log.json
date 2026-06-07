@@ -1,0 +1,51 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "BSL-.YYYY.-.######.",
+ "creation": "2026-06-07 12:00:00",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "sb_meta", "sync_dt", "provider", "trigger", "cb_meta", "bank_account", "endpoint",
+  "sb_stats", "fetched", "created", "skipped_duplicates", "cb_stats", "matched", "retried", "retried_succeeded",
+  "sb_status", "status", "duration_ms", "cb_status", "error_log", "notes"
+ ],
+ "fields": [
+  {"fieldname": "sb_meta", "fieldtype": "Section Break", "label": "Run Info"},
+  {"fieldname": "sync_dt", "fieldtype": "Datetime", "label": "Sync At", "in_list_view": 1, "reqd": 1},
+  {"fieldname": "provider", "fieldtype": "Data", "label": "Provider", "in_list_view": 1, "reqd": 1, "length": 32},
+  {"fieldname": "trigger", "fieldtype": "Select", "label": "Trigger", "options": "Scheduled\nManual\nDry-run\nLookback", "in_list_view": 1, "reqd": 1},
+  {"fieldname": "cb_meta", "fieldtype": "Column Break"},
+  {"fieldname": "bank_account", "fieldtype": "Link", "options": "Bank Account", "label": "Bank Account"},
+  {"fieldname": "endpoint", "fieldtype": "Data", "label": "Endpoint", "length": 255},
+
+  {"fieldname": "sb_stats", "fieldtype": "Section Break", "label": "Stats"},
+  {"fieldname": "fetched", "fieldtype": "Int", "label": "Fetched", "in_list_view": 1, "default": "0"},
+  {"fieldname": "created", "fieldtype": "Int", "label": "Created", "in_list_view": 1, "default": "0"},
+  {"fieldname": "skipped_duplicates", "fieldtype": "Int", "label": "Skipped (Dup)", "default": "0"},
+  {"fieldname": "cb_stats", "fieldtype": "Column Break"},
+  {"fieldname": "matched", "fieldtype": "Int", "label": "Matched", "default": "0"},
+  {"fieldname": "retried", "fieldtype": "Int", "label": "Retried", "default": "0"},
+  {"fieldname": "retried_succeeded", "fieldtype": "Int", "label": "Retried OK", "default": "0"},
+
+  {"fieldname": "sb_status", "fieldtype": "Section Break", "label": "Status"},
+  {"fieldname": "status", "fieldtype": "Select", "label": "Status", "options": "Running\nSuccess\nPartial\nError", "in_list_view": 1, "reqd": 1, "default": "Running"},
+  {"fieldname": "duration_ms", "fieldtype": "Int", "label": "Duration (ms)"},
+  {"fieldname": "cb_status", "fieldtype": "Column Break"},
+  {"fieldname": "error_log", "fieldtype": "Long Text", "label": "Error Log"},
+  {"fieldname": "notes", "fieldtype": "Small Text", "label": "Notes"}
+ ],
+ "links": [],
+ "modified": "2026-06-07 12:00:00",
+ "modified_by": "Administrator",
+ "module": "ERPNext Banking",
+ "name": "Bank Sync Log",
+ "owner": "Administrator",
+ "permissions": [
+  {"role": "System Manager", "read": 1, "delete": 1},
+  {"role": "Accounts Manager", "read": 1}
+ ],
+ "sort_field": "sync_dt",
+ "sort_order": "DESC",
+ "track_changes": 0
+}
