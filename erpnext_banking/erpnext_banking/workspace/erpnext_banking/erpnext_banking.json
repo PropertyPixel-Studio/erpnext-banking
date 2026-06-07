@@ -1,0 +1,38 @@
+{
+ "charts": [],
+ "content": "[{\"type\":\"header\",\"data\":{\"text\":\"<span class='h4'><b>Banking</b></span>\",\"col\":12}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Fio Settings\",\"col\":4}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Bank Sync Log\",\"col\":4}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Bank Transaction\",\"col\":4}}]",
+ "creation": "2026-06-07 12:00:00",
+ "docstatus": 0,
+ "doctype": "Workspace",
+ "for_user": "",
+ "hide_custom": 0,
+ "icon": "credit-card",
+ "idx": 0,
+ "is_hidden": 0,
+ "label": "ERPNext Banking",
+ "links": [
+  {"hidden": 0, "is_query_report": 0, "label": "Configuration", "link_count": 0, "onboard": 0, "type": "Card Break"},
+  {"dependencies": "", "hidden": 0, "is_query_report": 0, "label": "Fio Settings", "link_count": 0, "link_to": "Fio Settings", "link_type": "DocType", "onboard": 1, "type": "Link"},
+  {"hidden": 0, "is_query_report": 0, "label": "Audit", "link_count": 0, "onboard": 0, "type": "Card Break"},
+  {"dependencies": "", "hidden": 0, "is_query_report": 0, "label": "Bank Sync Log", "link_count": 0, "link_to": "Bank Sync Log", "link_type": "DocType", "onboard": 0, "type": "Link"},
+  {"dependencies": "", "hidden": 0, "is_query_report": 0, "label": "Bank Transaction", "link_count": 0, "link_to": "Bank Transaction", "link_type": "DocType", "onboard": 0, "type": "Link"}
+ ],
+ "modified": "2026-06-07 12:00:00",
+ "modified_by": "Administrator",
+ "module": "ERPNext Banking",
+ "name": "ERPNext Banking",
+ "number_cards": [],
+ "onboarding": "",
+ "owner": "Administrator",
+ "parent_page": "",
+ "public": 1,
+ "quick_lists": [],
+ "roles": [],
+ "sequence_id": 35.0,
+ "shortcuts": [
+  {"label": "Fio Settings", "link_to": "Fio Settings", "type": "DocType"},
+  {"label": "Bank Sync Log", "link_to": "Bank Sync Log", "type": "DocType"},
+  {"label": "Bank Transaction", "link_to": "Bank Transaction", "type": "DocType"}
+ ],
+ "title": "ERPNext Banking"
+}
