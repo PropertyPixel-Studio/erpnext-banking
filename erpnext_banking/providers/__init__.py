@@ -1,8 +1,8 @@
 """Provider registry. Add new providers to ALL_PROVIDERS."""
 from .base import BankProvider
+from .fio import FioProvider
 
-ALL_PROVIDERS: list[type[BankProvider]] = []
-# FioProvider is appended in providers/fio/__init__.py (registered in Task 13)
+ALL_PROVIDERS: list[type[BankProvider]] = [FioProvider]
 
 
 def iter_enabled_providers():
