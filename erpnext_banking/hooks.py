@@ -2,7 +2,7 @@ from . import __version__ as app_version  # noqa: F401  # used by Frappe hook di
 
 app_name = "erpnext_banking"
 app_title = "ERPNext Banking"
-app_publisher = "PropertyPixel-Studio"
+app_publisher = "propix group"
 app_description = "Bank integration for ERPNext (Fio + extensible to other providers)"
 app_icon = "octicon octicon-credit-card"
 app_color = "blue"
