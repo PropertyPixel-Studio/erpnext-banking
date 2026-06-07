@@ -1,0 +1,57 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "creation": "2026-06-07 12:00:00",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "sb_main", "enabled", "api_token", "cb_main", "company", "bank_account",
+  "sb_sync", "lookback_days", "cb_sync", "reconcile_window_days",
+  "sb_reconcile", "auto_reconcile_incoming", "cb_reconcile", "auto_reconcile_outgoing",
+  "sb_notify", "notify_on_error", "cb_notify", "notify_email",
+  "sb_status", "last_sync_dt", "last_sync_status", "cb_status", "last_transaction_id"
+ ],
+ "fields": [
+  {"fieldname": "sb_main", "fieldtype": "Section Break", "label": "Provider"},
+  {"fieldname": "enabled", "fieldtype": "Check", "label": "Enabled", "default": "0"},
+  {"fieldname": "api_token", "fieldtype": "Password", "label": "Fio API Token (read-only)", "description": "Dedicated read-only token. Stored encrypted. Mirror in VaultWarden.", "mandatory_depends_on": "eval:doc.enabled"},
+  {"fieldname": "cb_main", "fieldtype": "Column Break"},
+  {"fieldname": "company", "fieldtype": "Link", "options": "Company", "label": "Company", "mandatory_depends_on": "eval:doc.enabled"},
+  {"fieldname": "bank_account", "fieldtype": "Link", "options": "Bank Account", "label": "Bank Account", "mandatory_depends_on": "eval:doc.enabled", "description": "Target Bank Account for incoming Bank Transactions."},
+
+  {"fieldname": "sb_sync", "fieldtype": "Section Break", "label": "Sync"},
+  {"fieldname": "lookback_days", "fieldtype": "Int", "label": "Lookback Days", "default": "7", "description": "Window for daily /periods/ safety-net fetch."},
+  {"fieldname": "cb_sync", "fieldtype": "Column Break"},
+  {"fieldname": "reconcile_window_days", "fieldtype": "Int", "label": "Reconcile Window Days", "default": "90", "description": "Sliding window for re-match cron over Unreconciled BT."},
+
+  {"fieldname": "sb_reconcile", "fieldtype": "Section Break", "label": "Auto Reconciliation"},
+  {"fieldname": "auto_reconcile_incoming", "fieldtype": "Check", "label": "Auto-Reconcile Incoming", "default": "0", "description": "Match deposits against Sales Invoice / Payment Request by VS."},
+  {"fieldname": "cb_reconcile", "fieldtype": "Column Break"},
+  {"fieldname": "auto_reconcile_outgoing", "fieldtype": "Check", "label": "Auto-Reconcile Outgoing", "default": "0", "description": "Match withdrawals against Purchase Invoice (layered rules)."},
+
+  {"fieldname": "sb_notify", "fieldtype": "Section Break", "label": "Notifications"},
+  {"fieldname": "notify_on_error", "fieldtype": "Check", "label": "Notify on Error", "default": "1"},
+  {"fieldname": "cb_notify", "fieldtype": "Column Break"},
+  {"fieldname": "notify_email", "fieldtype": "Data", "options": "Email", "label": "Notify Email", "depends_on": "eval:doc.notify_on_error"},
+
+  {"fieldname": "sb_status", "fieldtype": "Section Break", "label": "Status (read-only)", "collapsible": 1},
+  {"fieldname": "last_sync_dt", "fieldtype": "Datetime", "label": "Last Sync", "read_only": 1},
+  {"fieldname": "last_sync_status", "fieldtype": "Select", "label": "Last Sync Status", "options": "\nSuccess\nPartial\nError", "read_only": 1},
+  {"fieldname": "cb_status", "fieldtype": "Column Break"},
+  {"fieldname": "last_transaction_id", "fieldtype": "Data", "label": "Last Transaction ID", "read_only": 1}
+ ],
+ "issingle": 1,
+ "links": [],
+ "modified": "2026-06-07 12:00:00",
+ "modified_by": "Administrator",
+ "module": "ERPNext Banking",
+ "name": "Fio Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {"role": "System Manager", "read": 1, "write": 1, "create": 1, "delete": 1},
+  {"role": "Accounts Manager", "read": 1, "write": 1}
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "track_changes": 1
+}
