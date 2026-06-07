@@ -1,7 +1,11 @@
 from setuptools import setup, find_packages
 
 with open("requirements.txt") as f:
-	install_requires = f.read().strip().split("\n")
+	install_requires = [
+		line.strip()
+		for line in f.read().splitlines()
+		if line.strip() and not line.strip().startswith("#")
+	]
 
 # get version from __version__ variable in erpnext_banking/__init__.py
 from erpnext_banking import __version__ as version
