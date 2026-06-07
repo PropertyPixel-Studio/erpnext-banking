@@ -1,0 +1,26 @@
+[project]
+name = "erpnext_banking"
+description = "Bank integration for ERPNext (Fio + extensible to other providers)"
+authors = [{ name = "PropertyPixel-Studio", email = "krysta@propix.cz" }]
+license = "MIT"
+requires-python = ">=3.10"
+readme = "README.md"
+dynamic = ["version"]
+dependencies = [
+    "requests>=2.31.0",
+]
+
+[build-system]
+requires = ["flit_core >=3.4,<4"]
+build-backend = "flit_core.buildapi"
+
+[tool.flit.module]
+name = "erpnext_banking"
+
+[tool.ruff]
+line-length = 110
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+ignore = ["E501"]
