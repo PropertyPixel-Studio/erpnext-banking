@@ -21,7 +21,7 @@ from dataclasses import dataclass
 import frappe
 from frappe.utils import getdate
 
-from ._helpers import amount_matches, outgoing_window
+from ._helpers import amount_matches, outgoing_window, pick_unique_voucher
 from .providers import iter_enabled_providers
 from .providers.base import BankProvider
 
@@ -31,9 +31,15 @@ class ReconcileResult:
 	matched: int = 0
 	unresolved: int = 0
 	errors: int = 0
+	linked: int = 0  # BTs linked to a pre-existing Payment Entry / Journal Entry
 
 	def to_dict(self) -> dict:
-		return {"matched": self.matched, "unresolved": self.unresolved, "errors": self.errors}
+		return {
+			"matched": self.matched,
+			"unresolved": self.unresolved,
+			"errors": self.errors,
+			"linked": self.linked,
+		}
 
 
 def reconcile_one(bt_name: str) -> ReconcileResult:
@@ -255,12 +261,23 @@ def _rematch_provider(provider, settings) -> ReconcileResult:
 	from frappe.utils import add_days
 	from frappe.utils import today as _today
 
+	totals = ReconcileResult()
+
+	# Pass 1: link Unreconciled BTs to ALREADY-POSTED vouchers (Payment Entry / Journal
+	# Entry) that hit the bank account but were never reconciled against the feed. This
+	# runs FIRST so the invoice pass below never creates a duplicate Payment Entry for a
+	# payment that is already booked. Links only — it cannot double-pay.
+	try:
+		totals.linked += _match_existing_payments(settings)
+	except Exception:
+		frappe.log_error("match_existing_payments failed", "erpnext_banking")
+
 	window_start = add_days(_today(), -int(settings.reconcile_window_days or 90))
 	candidates = frappe.get_all(
 		"Bank Transaction",
 		filters={
 			"bank_account": settings.bank_account,
-			"status": "Unreconciled",
+			"status": "Unreconciled",  # re-queried after pass 1, so linked BTs drop out
 			"date": (">=", window_start),
 			"docstatus": 1,
 		},
@@ -268,7 +285,6 @@ def _rematch_provider(provider, settings) -> ReconcileResult:
 		pluck="name",
 	)
 
-	totals = ReconcileResult()
 	for name in candidates:
 		try:
 			r = reconcile_one(name)
@@ -282,6 +298,130 @@ def _rematch_provider(provider, settings) -> ReconcileResult:
 				"erpnext_banking",
 			)
 	return totals
+
+
+def _existing_voucher_pools(gl: str, company: str):
+	"""Build (outgoing, incoming) candidate pools of unreconciled vouchers on the bank GL.
+
+	A voucher is a candidate only if it posts to the bank account `gl` and has no
+	`clearance_date` (i.e. it was never reconciled against the bank feed). Each candidate
+	is a dict: {key, doctype, name, amount, date}. `key` is unique per voucher so a voucher
+	can be consumed by at most one Bank Transaction.
+	"""
+	from frappe.utils import getdate
+
+	out: list[dict] = []
+	inc: list[dict] = []
+
+	pes = frappe.get_all(
+		"Payment Entry",
+		filters={"docstatus": 1, "clearance_date": ["is", "not set"], "company": company},
+		fields=[
+			"name", "posting_date", "payment_type",
+			"paid_amount", "received_amount", "paid_from", "paid_to",
+		],
+	)
+	for p in pes:
+		d = getdate(p.posting_date)
+		if p.payment_type == "Pay" and p.paid_from == gl:
+			out.append({"key": ("PE", p.name), "doctype": "Payment Entry", "name": p.name,
+						"amount": float(p.paid_amount or 0), "date": d})
+		elif p.payment_type == "Receive" and p.paid_to == gl:
+			inc.append({"key": ("PE", p.name), "doctype": "Payment Entry", "name": p.name,
+						"amount": float(p.received_amount or p.paid_amount or 0), "date": d})
+
+	je_meta = {
+		j.name: j.posting_date
+		for j in frappe.get_all(
+			"Journal Entry",
+			filters={"docstatus": 1, "clearance_date": ["is", "not set"], "company": company},
+			fields=["name", "posting_date"],
+		)
+	}
+	if je_meta:
+		lines = frappe.get_all(
+			"Journal Entry Account",
+			filters={"account": gl, "parent": ["in", list(je_meta.keys())]},
+			fields=["parent", "debit_in_account_currency", "credit_in_account_currency"],
+		)
+		for r in lines:
+			d = getdate(je_meta[r.parent])
+			credit = float(r.credit_in_account_currency or 0)
+			debit = float(r.debit_in_account_currency or 0)
+			if credit > 0:  # money out of the bank → matches a withdrawal
+				out.append({"key": ("JE", r.parent), "doctype": "Journal Entry", "name": r.parent,
+							"amount": credit, "date": d})
+			elif debit > 0:  # money into the bank → matches a deposit
+				inc.append({"key": ("JE", r.parent), "doctype": "Journal Entry", "name": r.parent,
+							"amount": debit, "date": d})
+	return out, inc
+
+
+def _match_existing_payments(settings) -> int:
+	"""Link Unreconciled BTs to pre-existing unreconciled Payment Entries / Journal Entries
+	by exact amount + date proximity + uniqueness. Returns the number of BTs linked.
+
+	Gated by the same auto_reconcile flags as invoice matching: outgoing candidates are
+	only considered when `auto_reconcile_outgoing` is on, incoming when
+	`auto_reconcile_incoming` is on. Never creates a voucher — only links existing ones via
+	the stock Bank Reconciliation Tool, so it cannot double-pay.
+	"""
+	from frappe.utils import add_days, getdate
+	from frappe.utils import today as _today
+	from erpnext.accounts.doctype.bank_reconciliation_tool.bank_reconciliation_tool import (
+		reconcile_vouchers,
+	)
+
+	allow_out = bool(settings.auto_reconcile_outgoing)
+	allow_in = bool(settings.auto_reconcile_incoming)
+	if not (allow_out or allow_in):
+		return 0
+
+	gl = frappe.db.get_value("Bank Account", settings.bank_account, "account")
+	if not gl:
+		return 0
+
+	window_start = add_days(_today(), -int(settings.reconcile_window_days or 90))
+	bts = frappe.get_all(
+		"Bank Transaction",
+		filters={
+			"bank_account": settings.bank_account,
+			"status": "Unreconciled",
+			"date": (">=", window_start),
+			"docstatus": 1,
+		},
+		fields=["name", "date", "deposit", "withdrawal"],
+		order_by="date asc",
+	)
+
+	out_pool, in_pool = _existing_voucher_pools(gl, settings.company)
+	used: set = set()
+	linked = 0
+	for bt in bts:
+		withdrawal = float(bt.withdrawal or 0)
+		deposit = float(bt.deposit or 0)
+		if withdrawal > 0 and allow_out:
+			pool, amount = out_pool, withdrawal
+		elif deposit > 0 and allow_in:
+			pool, amount = in_pool, deposit
+		else:
+			continue
+		avail = [c for c in pool if c["key"] not in used]
+		match = pick_unique_voucher(amount, getdate(bt.date), avail)
+		if not match:
+			continue
+		try:
+			reconcile_vouchers(
+				bt.name,
+				frappe.as_json([
+					{"payment_doctype": match["doctype"], "payment_name": match["name"], "amount": amount}
+				]),
+			)
+			used.add(match["key"])
+			linked += 1
+		except Exception:
+			frappe.log_error(f"existing-payment link failed BT={bt.name}", "erpnext_banking")
+	return linked
 
 
 def on_invoice_submit(doc, method=None):
