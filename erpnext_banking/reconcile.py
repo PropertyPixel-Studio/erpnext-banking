@@ -133,7 +133,7 @@ def _reconcile_outgoing(bt, settings) -> ReconcileResult:
 			"Purchase Invoice",
 			{
 				"supplier": supplier,
-				"bill_no": vs,
+				"variable_symbol": vs,
 				"docstatus": 1,
 				"outstanding_amount": (">", 0),
 				"company": settings.company,
@@ -168,7 +168,7 @@ def _reconcile_outgoing(bt, settings) -> ReconcileResult:
 		pis = frappe.get_all(
 			"Purchase Invoice",
 			filters={
-				"bill_no": vs,
+				"variable_symbol": vs,
 				"docstatus": 1,
 				"outstanding_amount": (">", 0),
 				"company": settings.company,
