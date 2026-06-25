@@ -127,13 +127,13 @@ def _reconcile_outgoing(bt, settings) -> ReconcileResult:
 	vs = (bt.reference_number or "").strip()
 	supplier = bt.party if bt.party_type == "Supplier" else None
 
-	# Rule 1: supplier known + VS == bill_no, single open PI
+	# Rule 1: supplier known + VS == variable_symbol, single open PI
 	if supplier and vs:
 		pi = frappe.db.get_value(
 			"Purchase Invoice",
 			{
 				"supplier": supplier,
-				"bill_no": vs,
+				"variable_symbol": vs,
 				"docstatus": 1,
 				"outstanding_amount": (">", 0),
 				"company": settings.company,
@@ -163,12 +163,12 @@ def _reconcile_outgoing(bt, settings) -> ReconcileResult:
 			return _try_pay_and_reconcile(bt, "Purchase Invoice", matching[0].name, amount)
 		# >1 matching → ambiguity, do not auto-reconcile
 
-	# Rule 3: supplier unknown but VS == bill_no uniquely identifies one PI
+	# Rule 3: supplier unknown but VS == variable_symbol uniquely identifies one PI
 	if vs and not supplier:
 		pis = frappe.get_all(
 			"Purchase Invoice",
 			filters={
-				"bill_no": vs,
+				"variable_symbol": vs,
 				"docstatus": 1,
 				"outstanding_amount": (">", 0),
 				"company": settings.company,
