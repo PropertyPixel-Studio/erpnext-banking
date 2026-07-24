@@ -68,6 +68,43 @@ Then:
 The three nightly cron jobs (sync at 02:00, lookback at 03:00, re-match at 03:30) start as soon
 as `Enabled` is on.
 
+## Card payments & rules (Bank Matching Rule)
+
+Card charges have **no counterparty account** — the bank puts the card number in
+`reference_number` and the merchant string in the description (`Nákup: ANTHROPIC* CLAUDE SUB,
+…, částka  90.00 EUR`). The supplier/VS rules can't match those, so a **Bank Matching Rule**
+doctype drives them. During outgoing reconciliation, for a BT with no supplier, the first
+enabled rule (lowest `priority`) whose `pattern` is found (case-insensitively, or as a regex
+when prefixed `re:`) in the description decides the action:
+
+- **`merchant_supplier`** — find the single open Purchase Invoice of the rule's supplier whose
+  `bill_date` is within the card window (BT date −35 … +7 days) and whose amount matches, then
+  create a submitted Payment Entry linked to the BT. Matching order per candidate:
+  1. original currency **CZK** → exact CZK amount (±1 Kč);
+  2. foreign currency → compare the parsed `částka` against the PI custom fields
+     `original_amount` / `original_currency` (populated by the Paperless import for EUR/USD
+     invoices);
+  3. fallback → **relative FX tolerance** (default 4 %) of BT withdrawal vs PI outstanding,
+     because the bank converts at its card rate while the invoice is booked at the ČNB rate
+     (e.g. 2241.84 vs 2177.55 = 2.95 % → match). Ambiguity (0 or >1 candidates) is left for
+     manual reconciliation.
+
+  When the bank amount differs from the invoice, the FX difference is written off on the
+  Payment Entry via a `deductions` row: **563 - Kurzové ztráty** (bank charged more) or
+  **663 - Kurzové zisky** (bank charged less), so the entry balances.
+- **`auto_je`** — book a no-document withdrawal (salary, bank fee) straight to an account via a
+  submitted **Journal Entry** (`Bank Entry`: debit the rule's `je_account` + cost center, credit
+  the bank contra account **221**), then link it to the BT. Gated by **Auto Journal Entries** in
+  Fio Settings (default on). Salary rules match the counterparty account the mapper writes into
+  the description (`Protiúčet: 2371741018/3030` → 521); fees match `Poplatek` → 568.
+- **`ignore`** — never auto-process transactions matching this pattern.
+
+Defaults (FX tolerance, loss/gain accounts, JE contra account, cost center) live in the
+**Card Payments & Rules** section of Fio Settings. A `migrate` seeds the default rules
+(FACEBK, ANTHROPIC, GOOGLE, HETZNER, salary/fee auto_je rules) — but only when the referenced
+Supplier / Account already exists, so review **Bank Matching Rule** list after install and add
+any that were skipped.
+
 ## Security
 
 - The Fio token is a **read-only** token (Fio supports issuing tokens limited to transaction
