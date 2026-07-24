@@ -67,6 +67,26 @@ def reconcile_one(bt_name: str) -> ReconcileResult:
 	return ReconcileResult()
 
 
+def _find_unique(doctype: str, filters: dict, fields: list[str]) -> dict | None:
+	"""Return the single record matching `filters`, or None if there are zero or several.
+
+	Replaces `frappe.db.get_value(...)`, which silently returns "the first" row on
+	ambiguous filters. That's dangerous for invoice matching: e.g. a supplier billing
+	the exact same amount every month has several open Purchase Invoices matching
+	`{supplier, variable_symbol}` at once, and picking "the first" one can allocate a
+	payment to the wrong invoice. Any rule that needs "the one invoice this filter
+	identifies" should go through this helper instead of get_value/get_list[0].
+	"""
+	results = frappe.get_all(doctype, filters=filters, fields=fields)
+	if len(results) == 1:
+		return results[0]
+	if len(results) > 1:
+		frappe.logger("erpnext_banking").debug(
+			f"Ambiguous {doctype} match ({len(results)} candidates) for filters={filters} — skipping"
+		)
+	return None
+
+
 def _provider_for_bank_account(bank_account: str) -> BankProvider | None:
 	"""Find which enabled provider owns this Bank Account."""
 	for p in iter_enabled_providers():
@@ -83,7 +103,8 @@ def _reconcile_incoming(bt, settings) -> ReconcileResult:
 		return ReconcileResult(unresolved=1)
 
 	# 1) Sales Invoice with matching variable_symbol, still has outstanding
-	si = frappe.db.get_value(
+	# (ambiguity-guarded: skip if >1 open SI shares this VS — see _find_unique)
+	si = _find_unique(
 		"Sales Invoice",
 		{
 			"variable_symbol": vs,
@@ -92,19 +113,17 @@ def _reconcile_incoming(bt, settings) -> ReconcileResult:
 			"company": settings.company,
 		},
 		["name", "outstanding_amount"],
-		order_by="posting_date asc",
-		as_dict=True,
 	)
-	if si and amount_matches(float(bt.deposit), float(si.outstanding_amount)):
+	if si and amount_matches(float(bt.deposit), float(si["outstanding_amount"])):
 		try:
-			_create_payment_entry_and_reconcile(bt, "Sales Invoice", si.name, float(bt.deposit))
+			_create_payment_entry_and_reconcile(bt, "Sales Invoice", si["name"], float(bt.deposit))
 			return ReconcileResult(matched=1)
 		except Exception:
 			frappe.log_error("Incoming SI reconcile failed", "erpnext_banking")
 			return ReconcileResult(errors=1)
 
-	# 2) Payment Request with matching variable_symbol
-	pr = frappe.db.get_value(
+	# 2) Payment Request with matching variable_symbol (same ambiguity guard)
+	pr = _find_unique(
 		"Payment Request",
 		{
 			"variable_symbol": vs,
@@ -112,12 +131,11 @@ def _reconcile_incoming(bt, settings) -> ReconcileResult:
 			"status": ("in", ["Requested", "Partially Paid"]),
 		},
 		["name", "reference_doctype", "reference_name", "grand_total"],
-		as_dict=True,
 	)
-	if pr and amount_matches(float(bt.deposit), float(pr.grand_total)):
+	if pr and amount_matches(float(bt.deposit), float(pr["grand_total"])):
 		try:
 			_create_payment_entry_and_reconcile(
-				bt, pr.reference_doctype, pr.reference_name, float(bt.deposit)
+				bt, pr["reference_doctype"], pr["reference_name"], float(bt.deposit)
 			)
 			return ReconcileResult(matched=1)
 		except Exception:
@@ -134,8 +152,9 @@ def _reconcile_outgoing(bt, settings) -> ReconcileResult:
 	supplier = bt.party if bt.party_type == "Supplier" else None
 
 	# Rule 1: supplier known + VS == bill_no, single open PI
+	# (ambiguity-guarded: e.g. a supplier billing the same amount+VS twice — see _find_unique)
 	if supplier and vs:
-		pi = frappe.db.get_value(
+		pi = _find_unique(
 			"Purchase Invoice",
 			{
 				"supplier": supplier,
@@ -145,10 +164,9 @@ def _reconcile_outgoing(bt, settings) -> ReconcileResult:
 				"company": settings.company,
 			},
 			["name", "outstanding_amount"],
-			as_dict=True,
 		)
-		if pi and amount_matches(amount, float(pi.outstanding_amount)):
-			return _try_pay_and_reconcile(bt, "Purchase Invoice", pi.name, amount)
+		if pi and amount_matches(amount, float(pi["outstanding_amount"])):
+			return _try_pay_and_reconcile(bt, "Purchase Invoice", pi["name"], amount)
 
 	# Rule 2: supplier known + single open PI with matching amount in window
 	if supplier:
@@ -170,19 +188,21 @@ def _reconcile_outgoing(bt, settings) -> ReconcileResult:
 		# >1 matching → ambiguity, do not auto-reconcile
 
 	# Rule 3: supplier unknown but VS == bill_no uniquely identifies one PI
+	# (rewritten onto _find_unique for consistency — behavior unchanged, was already
+	# ambiguity-guarded via the len(pis) == 1 check)
 	if vs and not supplier:
-		pis = frappe.get_all(
+		pi = _find_unique(
 			"Purchase Invoice",
-			filters={
+			{
 				"variable_symbol": vs,
 				"docstatus": 1,
 				"outstanding_amount": (">", 0),
 				"company": settings.company,
 			},
-			fields=["name", "outstanding_amount"],
+			["name", "outstanding_amount"],
 		)
-		if len(pis) == 1 and amount_matches(amount, float(pis[0].outstanding_amount)):
-			return _try_pay_and_reconcile(bt, "Purchase Invoice", pis[0].name, amount)
+		if pi and amount_matches(amount, float(pi["outstanding_amount"])):
+			return _try_pay_and_reconcile(bt, "Purchase Invoice", pi["name"], amount)
 
 	return ReconcileResult(unresolved=1)
 
