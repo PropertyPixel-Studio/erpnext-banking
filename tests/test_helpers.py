@@ -101,7 +101,13 @@ def test_pick_unique_voucher_single_match_respects_day_gap():
 
 	from erpnext_banking._helpers import pick_unique_voucher
 
-	january_je = {"amount": 3000.0, "date": date(2026, 1, 15), "key": "JE-1", "doctype": "Journal Entry", "name": "JE-1"}
+	january_je = {
+		"amount": 3000.0,
+		"date": date(2026, 1, 15),
+		"key": "JE-1",
+		"doctype": "Journal Entry",
+		"name": "JE-1",
+	}
 	assert pick_unique_voucher(3000.0, date(2026, 7, 15), [january_je]) is None
 	assert pick_unique_voucher(3000.0, date(2026, 1, 18), [january_je]) == january_je
 	no_date = {"amount": 3000.0, "date": None, "key": "JE-2", "doctype": "Journal Entry", "name": "JE-2"}
