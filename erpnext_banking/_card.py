@@ -203,6 +203,8 @@ def journal_entry_payload(
 	credit_account: str,
 	cost_center: str | None,
 	remark: str,
+	reference_no: str | None = None,
+	reference_date=None,
 ) -> dict:
 	"""Build the Journal Entry doc dict for an auto_je rule (Bank Entry: debit the expense
 	account, credit the bank contra account). cost_center is attached to the debit
@@ -219,6 +221,10 @@ def journal_entry_payload(
 		"voucher_type": "Bank Entry",
 		"company": company,
 		"posting_date": posting_date,
+		# ERPNext validates "Reference No & Reference Date is required for Bank Entry"
+		# on submit — a Bank Entry JE without cheque_no/cheque_date cannot be submitted.
+		"cheque_no": reference_no or "bank",
+		"cheque_date": reference_date or posting_date,
 		"user_remark": remark,
 		"accounts": [
 			debit_line,
