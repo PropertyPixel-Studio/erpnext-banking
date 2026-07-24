@@ -30,7 +30,13 @@ from ._card import (
 	pick_card_candidate,
 	select_rule,
 )
-from ._helpers import amount_matches, outgoing_window, pick_unique_voucher
+from ._helpers import (
+	amount_matches,
+	incoming_window,
+	outgoing_window,
+	parse_counter_account,
+	pick_unique_voucher,
+)
 from .providers import iter_enabled_providers
 from .providers.base import BankProvider
 
@@ -113,51 +119,142 @@ def _provider_for_bank_account(bank_account: str) -> BankProvider | None:
 
 
 def _reconcile_incoming(bt, settings) -> ReconcileResult:
-	"""Match incoming deposit to a Sales Invoice (preferred) or Payment Request by VS."""
+	"""Match incoming deposit to a Sales Invoice (preferred) or Payment Request by VS.
+
+	If the payer sends a wrong or missing VS, neither VS lookup below finds anything —
+	falls through to `_reconcile_incoming_fallback` (Customer via counter-account, then a
+	company-wide amount+window match). Gating: this whole function only runs when
+	`auto_reconcile_incoming` is on (checked once in `reconcile_one`); the fallback branches
+	share that same gate — they're plain code paths inside this function, not a separate flag.
+	"""
 	vs = (bt.reference_number or "").strip()
-	if not vs:
+
+	if vs:
+		# 1) Sales Invoice with matching variable_symbol, still has outstanding
+		# (ambiguity-guarded: skip if >1 open SI shares this VS — see _find_unique)
+		si = _find_unique(
+			"Sales Invoice",
+			{
+				"variable_symbol": vs,
+				"docstatus": 1,
+				"outstanding_amount": (">", 0),
+				"company": settings.company,
+			},
+			["name", "outstanding_amount"],
+		)
+		if si and amount_matches(float(bt.deposit), float(si["outstanding_amount"])):
+			try:
+				_create_payment_entry_and_reconcile(bt, "Sales Invoice", si["name"], float(bt.deposit))
+				return ReconcileResult(matched=1)
+			except Exception:
+				frappe.log_error("Incoming SI reconcile failed", "erpnext_banking")
+				return ReconcileResult(errors=1)
+
+		# 2) Payment Request with matching variable_symbol (same ambiguity guard)
+		pr = _find_unique(
+			"Payment Request",
+			{
+				"variable_symbol": vs,
+				"docstatus": 1,
+				"status": ("in", ["Requested", "Partially Paid"]),
+			},
+			["name", "reference_doctype", "reference_name", "grand_total"],
+		)
+		if pr and amount_matches(float(bt.deposit), float(pr["grand_total"])):
+			try:
+				_create_payment_entry_and_reconcile(
+					bt, pr["reference_doctype"], pr["reference_name"], float(bt.deposit)
+				)
+				return ReconcileResult(matched=1)
+			except Exception:
+				frappe.log_error("Incoming PR reconcile failed", "erpnext_banking")
+				return ReconcileResult(errors=1)
+
+	return _reconcile_incoming_fallback(bt, settings)
+
+
+def _customer_from_counter_account(description: str | None) -> str | None:
+	"""Best-effort Customer identification from a BT's "Protiúčet: acc/bank" token.
+
+	Mirrors sync._try_attach_supplier's Bank Account lookup (account_number + branch_code,
+	falling back to an IBAN-only match on bank_account_no) but for party_type Customer, and
+	parsed from the already-persisted BT.description — at reconcile time the raw provider
+	payload _try_attach_supplier used at sync time is no longer available.
+	"""
+	parsed = parse_counter_account(description)
+	if not parsed:
+		return None
+	acc, bank = parsed
+	customer = frappe.db.get_value(
+		"Bank Account",
+		{"account_number": acc, "branch_code": bank, "party_type": "Customer"},
+		"party",
+	)
+	if not customer:
+		customer = frappe.db.get_value(
+			"Bank Account",
+			{"bank_account_no": acc, "party_type": "Customer"},
+			"party",
+		)
+	return customer
+
+
+def _reconcile_incoming_fallback(bt, settings) -> ReconcileResult:
+	"""Exact-VS match found nothing (wrong or missing VS on the incoming deposit).
+
+	(a) Identify the Customer from the counterparty bank account (Protiúčet). If found,
+	    look at that Customer's open Sales Invoices and require exactly one whose
+	    outstanding amount matches the deposit (±1 Kč) — several/none is an ambiguity,
+	    skip (no further fallback: we already know *who* paid, a bad amount match there is
+	    a real discrepancy, not something a wider search should paper over).
+	(b) No Customer identified — company-wide amount+window match: every open Sales
+	    Invoice with outstanding == deposit (±1 Kč) and posting_date within
+	    bt.date -35..+7 days. Exactly one candidate → match, otherwise skip.
+	"""
+	deposit = float(bt.deposit)
+	customer = _customer_from_counter_account(getattr(bt, "description", None))
+
+	if customer:
+		candidates = frappe.get_all(
+			"Sales Invoice",
+			filters={
+				"customer": customer,
+				"docstatus": 1,
+				"outstanding_amount": (">", 0),
+				"company": settings.company,
+			},
+			fields=["name", "outstanding_amount"],
+		)
+		matching = [c for c in candidates if amount_matches(deposit, float(c["outstanding_amount"]))]
+		if len(matching) == 1:
+			return _try_pay_and_reconcile(bt, "Sales Invoice", matching[0]["name"], deposit)
+		frappe.logger("erpnext_banking").debug(
+			f"Incoming customer-fallback match for BT={bt.name} customer={customer}: "
+			f"{len(matching)} amount-matching candidate(s) of {len(candidates)} open SI — skipping"
+		)
 		return ReconcileResult(unresolved=1)
 
-	# 1) Sales Invoice with matching variable_symbol, still has outstanding
-	# (ambiguity-guarded: skip if >1 open SI shares this VS — see _find_unique)
-	si = _find_unique(
+	# (b) No counter-account / no matching Customer Bank Account — widen to a company-wide
+	# amount+window search instead of giving up outright.
+	w_from, w_to = incoming_window(getdate(bt.date))
+	candidates = frappe.get_all(
 		"Sales Invoice",
-		{
-			"variable_symbol": vs,
+		filters={
 			"docstatus": 1,
 			"outstanding_amount": (">", 0),
 			"company": settings.company,
+			"posting_date": ("between", [w_from, w_to]),
 		},
-		["name", "outstanding_amount"],
+		fields=["name", "outstanding_amount"],
 	)
-	if si and amount_matches(float(bt.deposit), float(si["outstanding_amount"])):
-		try:
-			_create_payment_entry_and_reconcile(bt, "Sales Invoice", si["name"], float(bt.deposit))
-			return ReconcileResult(matched=1)
-		except Exception:
-			frappe.log_error("Incoming SI reconcile failed", "erpnext_banking")
-			return ReconcileResult(errors=1)
+	matching = [c for c in candidates if amount_matches(deposit, float(c["outstanding_amount"]))]
+	if len(matching) == 1:
+		return _try_pay_and_reconcile(bt, "Sales Invoice", matching[0]["name"], deposit)
 
-	# 2) Payment Request with matching variable_symbol (same ambiguity guard)
-	pr = _find_unique(
-		"Payment Request",
-		{
-			"variable_symbol": vs,
-			"docstatus": 1,
-			"status": ("in", ["Requested", "Partially Paid"]),
-		},
-		["name", "reference_doctype", "reference_name", "grand_total"],
+	frappe.logger("erpnext_banking").debug(
+		f"Incoming amount/window fallback for BT={bt.name}: {len(matching)} candidate(s) "
+		f"in window {w_from}..{w_to} — skipping"
 	)
-	if pr and amount_matches(float(bt.deposit), float(pr["grand_total"])):
-		try:
-			_create_payment_entry_and_reconcile(
-				bt, pr["reference_doctype"], pr["reference_name"], float(bt.deposit)
-			)
-			return ReconcileResult(matched=1)
-		except Exception:
-			frappe.log_error("Incoming PR reconcile failed", "erpnext_banking")
-			return ReconcileResult(errors=1)
-
 	return ReconcileResult(unresolved=1)
 
 
@@ -232,11 +329,13 @@ def _reconcile_outgoing(bt, settings) -> ReconcileResult:
 
 
 def _try_pay_and_reconcile(bt, dt: str, dn: str, amount: float) -> ReconcileResult:
+	"""Shared by both directions: outgoing supplier/card rules and the incoming fallback
+	branches (_reconcile_incoming_fallback) all funnel their match through this."""
 	try:
 		_create_payment_entry_and_reconcile(bt, dt, dn, amount)
 		return ReconcileResult(matched=1)
 	except Exception:
-		frappe.log_error("Outgoing reconcile failed", "erpnext_banking")
+		frappe.log_error(f"Reconcile failed BT={bt.name}", "erpnext_banking")
 		return ReconcileResult(errors=1)
 
 

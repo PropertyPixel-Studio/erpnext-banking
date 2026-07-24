@@ -105,6 +105,30 @@ Defaults (FX tolerance, loss/gain accounts, JE contra account, cost center) live
 Supplier / Account already exists, so review **Bank Matching Rule** list after install and add
 any that were skipped.
 
+## Incoming fallback matching (wrong/missing VS)
+
+Payers sometimes send the wrong variable symbol (typo'd, copy-pasted from a different invoice,
+or omitted entirely), so the exact-VS match (`reference_number == variable_symbol`) finds
+nothing even though the payment is legitimate. When that happens, `_reconcile_incoming` tries
+two fallback layers before giving up:
+
+1. **Customer via counter-account.** Same idea as the outgoing supplier lookup: the BT
+   description carries `Protiúčet: <acc>/<bank>` (written by the Fio mapper). If a `Bank
+   Account` record with that account number + bank code (or, failing that, matching
+   `bank_account_no`) has `party_type = Customer`, we know *who* paid. If exactly one of that
+   Customer's open Sales Invoices matches the deposit amount (±1 Kč), it's reconciled. Zero or
+   several matching invoices → left `Unreconciled` (a wrong amount from a known customer is a
+   real discrepancy, not something to paper over with a wider search).
+2. **Company-wide amount + window.** Only when no Customer could be identified from the
+   counter-account (or the description carries no `Protiúčet:` token at all — e.g. some other
+   bank/provider format): every open Sales Invoice across the company with `outstanding_amount`
+   matching the deposit (±1 Kč) and `posting_date` within **BT date −35 … +7 days**. Exactly one
+   candidate → match; otherwise left `Unreconciled`.
+
+Both layers are gated by the same `Auto-Reconcile Incoming` flag as the exact-VS match — there's
+no separate on/off switch. Exact-VS matching itself is unchanged: when the VS does resolve to a
+Sales Invoice or Payment Request, these fallbacks never run.
+
 ## Security
 
 - The Fio token is a **read-only** token (Fio supports issuing tokens limited to transaction
@@ -174,6 +198,9 @@ Check, in order:
 - Is the amount within ±1 Kč of `outstanding_amount`?
 - For outgoing only: do you require 2+ matching signals? VS alone won't match outgoing without
   either a supplier identification or a single matching open PI.
+- For incoming with a wrong/missing VS: see "Incoming fallback matching" above — check whether
+  the description has a `Protiúčet:` token resolving to a Customer, and whether more than one
+  open Sales Invoice matches the amount (ambiguity → left Unreconciled on purpose).
 
 Anything that doesn't auto-match stays `Unreconciled` and is visible in the Bank Reconciliation
 Tool for manual resolution. **Nothing is ever lost.**
