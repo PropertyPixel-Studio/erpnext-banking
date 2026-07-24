@@ -12,7 +12,8 @@ def test_no_amount_match_returns_none():
 
 
 def test_single_amount_match_returns_it():
-	c = _c(100.0, date(2026, 6, 10), "PE-1")
+	# jediný amount-match se vrací, ale jen v rámci max_day_gap (viz day-gap fix)
+	c = _c(100.0, date(2026, 6, 5), "PE-1")
 	assert pick_unique_voucher(100.0, date(2026, 6, 1), [c, _c(50.0)]) is c
 
 

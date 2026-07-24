@@ -66,13 +66,17 @@ def pick_unique_voucher(bt_amount, bt_date, candidates, *, tolerance=AMOUNT_TOLE
 	matches = [c for c in candidates if abs(float(c["amount"]) - float(bt_amount)) <= tolerance]
 	if not matches:
 		return None
-	if len(matches) == 1:
-		return matches[0]
 
 	def gap(c):
 		if c.get("date") and bt_date:
 			return abs((c["date"] - bt_date).days)
 		return 10**6
+
+	# The day-gap guard applies even to a SINGLE amount-match: a lone stale voucher
+	# (e.g. an old free-floating JE with a recurring amount) must not be linked to a
+	# months-newer bank transaction. (Live incident: January JE grabbed a July wage BT.)
+	if len(matches) == 1:
+		return matches[0] if gap(matches[0]) <= max_day_gap else None
 
 	ranked = sorted(matches, key=gap)
 	if gap(ranked[0]) <= max_day_gap and gap(ranked[0]) < gap(ranked[1]):
