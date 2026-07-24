@@ -1,0 +1,39 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "autoname": "hash",
+ "creation": "2026-07-24 10:00:00",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "sb_main", "enabled", "rule_type", "priority", "cb_main", "pattern",
+  "sb_action", "supplier", "je_account", "cb_action", "remark_template"
+ ],
+ "fields": [
+  {"fieldname": "sb_main", "fieldtype": "Section Break", "label": "Rule"},
+  {"fieldname": "enabled", "fieldtype": "Check", "label": "Enabled", "default": "1", "in_list_view": 1},
+  {"fieldname": "rule_type", "fieldtype": "Select", "label": "Rule Type", "options": "merchant_supplier\nauto_je\nignore", "default": "merchant_supplier", "reqd": 1, "in_list_view": 1, "description": "merchant_supplier: match a card payment to a supplier's open Purchase Invoice.\nauto_je: book the transaction directly to an account via a Journal Entry.\nignore: never auto-process transactions matching this pattern."},
+  {"fieldname": "priority", "fieldtype": "Int", "label": "Priority", "default": "100", "description": "Lower runs first. First matching rule wins."},
+  {"fieldname": "cb_main", "fieldtype": "Column Break"},
+  {"fieldname": "pattern", "fieldtype": "Data", "label": "Pattern", "reqd": 1, "in_list_view": 1, "description": "Case-insensitive substring matched against the Bank Transaction description. Prefix with 're:' for a regular expression."},
+
+  {"fieldname": "sb_action", "fieldtype": "Section Break", "label": "Action"},
+  {"fieldname": "supplier", "fieldtype": "Link", "options": "Supplier", "label": "Supplier", "mandatory_depends_on": "eval:doc.rule_type=='merchant_supplier'", "depends_on": "eval:doc.rule_type=='merchant_supplier'", "in_list_view": 1},
+  {"fieldname": "je_account", "fieldtype": "Link", "options": "Account", "label": "JE Account", "mandatory_depends_on": "eval:doc.rule_type=='auto_je'", "depends_on": "eval:doc.rule_type=='auto_je'", "description": "Debit account for the auto Journal Entry (contra account = Fio Settings > JE Contra Account)."},
+  {"fieldname": "cb_action", "fieldtype": "Column Break"},
+  {"fieldname": "remark_template", "fieldtype": "Data", "label": "Remark Template", "description": "Optional text prepended to the Journal Entry / Payment Entry user remark."}
+ ],
+ "links": [],
+ "modified": "2026-07-24 10:00:00",
+ "modified_by": "Administrator",
+ "module": "ERPNext Banking",
+ "name": "Bank Matching Rule",
+ "owner": "Administrator",
+ "permissions": [
+  {"role": "System Manager", "read": 1, "write": 1, "create": 1, "delete": 1},
+  {"role": "Accounts Manager", "read": 1, "write": 1, "create": 1, "delete": 1}
+ ],
+ "sort_field": "priority",
+ "sort_order": "ASC",
+ "track_changes": 1
+}

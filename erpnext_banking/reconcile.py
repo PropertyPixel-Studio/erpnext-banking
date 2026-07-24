@@ -21,9 +21,25 @@ from dataclasses import dataclass
 import frappe
 from frappe.utils import getdate
 
+from ._card import (
+	build_je_remark,
+	card_window,
+	compute_fx_deduction,
+	journal_entry_payload,
+	parse_original_amount,
+	pick_card_candidate,
+	select_rule,
+)
 from ._helpers import amount_matches, outgoing_window, pick_unique_voucher
 from .providers import iter_enabled_providers
 from .providers.base import BankProvider
+
+# Config defaults for the card / rules-engine branch (overridable in Fio Settings).
+DEFAULT_FX_TOLERANCE_PERCENT = 4.0
+DEFAULT_FX_LOSS_ACCOUNT = "563 - Kurzové ztráty - PXG"
+DEFAULT_FX_GAIN_ACCOUNT = "663 - Kurzové zisky - PXG"
+DEFAULT_JE_CONTRA_ACCOUNT = "221 - Bankovní účty CZK - PXG"
+DEFAULT_COST_CENTER = "Main - PXG"
 
 
 @dataclass
@@ -187,6 +203,14 @@ def _reconcile_outgoing(bt, settings) -> ReconcileResult:
 			return _try_pay_and_reconcile(bt, "Purchase Invoice", matching[0].name, amount)
 		# >1 matching → ambiguity, do not auto-reconcile
 
+	# Card / rules-engine branch: BTs with no counterparty (card payments, bank fees,
+	# salaries). Driven by Bank Matching Rule instead of supplier+VS. Runs after the
+	# supplier rules (which need a party) and before the VS-only Rule 3.
+	if not supplier:
+		r = _reconcile_by_rules(bt, settings)
+		if r is not None:
+			return r
+
 	# Rule 3: supplier unknown but VS == bill_no uniquely identifies one PI
 	# (rewritten onto _find_unique for consistency — behavior unchanged, was already
 	# ambiguity-guarded via the len(pis) == 1 check)
@@ -242,6 +266,186 @@ def _create_payment_entry_and_reconcile(
 		{
 			"payment_document": "Payment Entry",
 			"payment_entry": pe.name,
+			"allocated_amount": amount,
+		},
+	)
+	bt.save(ignore_permissions=True)
+	frappe.db.commit()
+
+
+# --- Card / rules-engine branch (Bank Matching Rule) ---
+
+
+def _setting(settings, field: str, default):
+	"""Read a Fio Settings field, falling back to `default` when unset/empty."""
+	val = getattr(settings, field, None)
+	return val if val not in (None, "") else default
+
+
+def _load_rules() -> list[dict]:
+	"""Enabled Bank Matching Rules, cheapest fields only, priority-ordered."""
+	return frappe.get_all(
+		"Bank Matching Rule",
+		filters={"enabled": 1},
+		fields=["name", "pattern", "rule_type", "supplier", "je_account", "remark_template", "priority"],
+		order_by="priority asc",
+	)
+
+
+def _reconcile_by_rules(bt, settings) -> ReconcileResult | None:
+	"""Apply the first matching Bank Matching Rule to a no-counterparty BT.
+
+	Returns a ReconcileResult when a rule handled the BT, or None to fall through to the
+	remaining reconcile rules (no rule matched, or an auto_je rule was gated off).
+	"""
+	description = bt.description or ""
+	rule = select_rule(_load_rules(), description)
+	if not rule:
+		return None
+
+	rule_type = rule.get("rule_type")
+	if rule_type == "ignore":
+		# Intentional skip — leave Unreconciled, never auto-process. Not an error.
+		return ReconcileResult()
+	if rule_type == "merchant_supplier":
+		return _reconcile_card_merchant(bt, settings, rule)
+	if rule_type == "auto_je":
+		if not _setting(settings, "auto_journal_entries", 1):
+			return None  # feature gated off → let the remaining rules try
+		return _reconcile_auto_je(bt, settings, rule)
+	return None
+
+
+def _reconcile_card_merchant(bt, settings, rule) -> ReconcileResult:
+	"""Match a card payment to a single open Purchase Invoice of the rule's supplier."""
+	supplier = rule.get("supplier")
+	if not supplier:
+		return ReconcileResult(unresolved=1)
+
+	withdrawal = float(bt.withdrawal)
+	parsed = parse_original_amount(bt.description or "")
+	orig_amount, orig_currency = parsed if parsed else (None, None)
+
+	w_from, w_to = card_window(getdate(bt.date))
+	candidates = frappe.get_all(
+		"Purchase Invoice",
+		filters={
+			"supplier": supplier,
+			"docstatus": 1,
+			"outstanding_amount": (">", 0),
+			"company": settings.company,
+			"bill_date": ("between", [w_from, w_to]),
+		},
+		fields=["name", "outstanding_amount", "original_amount", "original_currency"],
+	)
+
+	fx_tol = float(_setting(settings, "fx_tolerance_percent", DEFAULT_FX_TOLERANCE_PERCENT))
+	match = pick_card_candidate(
+		candidates, withdrawal, orig_amount, orig_currency, fx_tolerance_percent=fx_tol
+	)
+	if not match:
+		frappe.logger("erpnext_banking").debug(
+			f"Card match for BT={bt.name} supplier={supplier}: "
+			f"{len(candidates)} candidate(s), no unique match — skipping"
+		)
+		return ReconcileResult(unresolved=1)
+
+	try:
+		_create_card_payment_entry(bt, match, withdrawal, settings)
+		return ReconcileResult(matched=1)
+	except Exception:
+		frappe.log_error(f"Card payment reconcile failed BT={bt.name}", "erpnext_banking")
+		return ReconcileResult(errors=1)
+
+
+def _create_card_payment_entry(bt, pi: dict, withdrawal: float, settings) -> None:
+	"""Create + submit a Payment Entry for a card charge and link it to the BT.
+
+	Allocates the PI outstanding to the invoice and, when the bank withdrawal differs
+	(EUR/USD FX spread), books the difference to the exchange loss/gain account via a
+	`deductions` row so the Payment Entry balances.
+	"""
+	from erpnext.accounts.doctype.payment_entry.payment_entry import get_payment_entry
+
+	allocated = float(pi["outstanding_amount"])
+	pe = get_payment_entry("Purchase Invoice", pi["name"], party_amount=allocated)
+	pe.payment_type = "Pay"
+	pe.posting_date = bt.date
+	pe.reference_no = bt.name
+	pe.reference_date = bt.date
+
+	gl = frappe.db.get_value("Bank Account", settings.bank_account, "account")
+	if gl:
+		pe.paid_from = gl
+	pe.paid_amount = withdrawal
+	pe.received_amount = withdrawal
+	for ref in pe.references:
+		ref.allocated_amount = allocated
+
+	ded = compute_fx_deduction(
+		withdrawal,
+		allocated,
+		loss_account=_setting(settings, "fx_loss_account", DEFAULT_FX_LOSS_ACCOUNT),
+		gain_account=_setting(settings, "fx_gain_account", DEFAULT_FX_GAIN_ACCOUNT),
+	)
+	if ded:
+		pe.append(
+			"deductions",
+			{
+				"account": ded["account"],
+				"cost_center": _setting(settings, "default_cost_center", DEFAULT_COST_CENTER),
+				"amount": ded["amount"],
+			},
+		)
+
+	pe.insert(ignore_permissions=True)
+	pe.submit()
+
+	bt.append(
+		"payment_entries",
+		{
+			"payment_document": "Payment Entry",
+			"payment_entry": pe.name,
+			"allocated_amount": withdrawal,
+		},
+	)
+	bt.save(ignore_permissions=True)
+	frappe.db.commit()
+
+
+def _reconcile_auto_je(bt, settings, rule) -> ReconcileResult:
+	"""Book a no-document withdrawal (salary, bank fee) straight to an account via a
+	Journal Entry, then link it to the BT."""
+	try:
+		_create_auto_je(bt, settings, rule)
+		return ReconcileResult(matched=1)
+	except Exception:
+		frappe.log_error(f"Auto Journal Entry failed BT={bt.name}", "erpnext_banking")
+		return ReconcileResult(errors=1)
+
+
+def _create_auto_je(bt, settings, rule) -> None:
+	amount = float(bt.withdrawal)
+	payload = journal_entry_payload(
+		company=settings.company,
+		posting_date=bt.date,
+		amount=amount,
+		debit_account=rule["je_account"],
+		credit_account=_setting(settings, "je_contra_account", DEFAULT_JE_CONTRA_ACCOUNT),
+		cost_center=_setting(settings, "default_cost_center", DEFAULT_COST_CENTER),
+		remark=build_je_remark(rule.get("remark_template"), bt.description),
+		reference_no=(bt.reference_number or bt.name),
+		reference_date=bt.date,
+	)
+	je = frappe.get_doc(payload)
+	je.insert(ignore_permissions=True)
+	je.submit()
+
+	bt.append(
+		"payment_entries",
+		{
+			"payment_document": "Journal Entry",
+			"payment_entry": je.name,
 			"allocated_amount": amount,
 		},
 	)
