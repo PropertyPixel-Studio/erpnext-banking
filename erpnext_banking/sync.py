@@ -164,13 +164,44 @@ def _attempt_insert(ctx: _RunContext, raw: dict, round_no: int = 0) -> bool:
 
 
 def _is_already_inserted(ctx: _RunContext, raw: dict) -> bool:
-	tx_id = str(ctx.provider.to_bank_transaction(raw)["transaction_id"])
-	return bool(
-		frappe.db.exists(
-			"Bank Transaction",
-			{"transaction_id": tx_id, "bank_account": ctx.settings.bank_account},
-		)
+	"""True if this raw transaction already has a Bank Transaction on file.
+
+	Primary check: exact transaction_id match (cheap, unambiguous — Fio's tx id is
+	provider-unique). Some Bank Transactions never get a transaction_id though (e.g.
+	manually created, or imported via another path), so they don't collide with the
+	primary check and can end up duplicated on the next sync. Secondary check closes
+	that gap: same bank_account/date/amount/reference_number, docstatus not cancelled.
+	If such a record is found *and it has no transaction_id yet*, we backfill it here
+	instead of inserting a duplicate. If it already has a (different) transaction_id,
+	it's a legitimate distinct movement (e.g. two same-amount payments same day) and
+	we fall through to a normal insert.
+	"""
+	kwargs = ctx.provider.to_bank_transaction(raw)
+	tx_id = str(kwargs["transaction_id"])
+	if frappe.db.exists(
+		"Bank Transaction",
+		{"transaction_id": tx_id, "bank_account": ctx.settings.bank_account},
+	):
+		return True
+
+	existing = frappe.db.get_value(
+		"Bank Transaction",
+		{
+			"bank_account": ctx.settings.bank_account,
+			"date": kwargs["date"],
+			"deposit": kwargs["deposit"],
+			"withdrawal": kwargs["withdrawal"],
+			"reference_number": kwargs["reference_number"],
+			"docstatus": ("!=", 2),
+		},
+		["name", "transaction_id"],
+		as_dict=True,
 	)
+	if existing and not existing.get("transaction_id"):
+		frappe.db.set_value("Bank Transaction", existing["name"], "transaction_id", tx_id)
+		return True
+
+	return False
 
 
 def _try_attach_supplier(bt, raw: dict, provider) -> None:
