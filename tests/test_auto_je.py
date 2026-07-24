@@ -128,3 +128,31 @@ def test_remark_collapses_whitespace_and_truncates():
 
 def test_remark_empty_when_both_empty():
 	assert build_je_remark("", "") == ""
+
+
+def test_journal_entry_payload_bank_entry_reference_fields():
+	"""ERPNext refuses to submit a Bank Entry JE without cheque_no/cheque_date."""
+	payload = journal_entry_payload(
+		company="propix group s.r.o.",
+		posting_date="2026-06-11",
+		amount=6700.0,
+		debit_account="521 - Mzdové náklady - PXG",
+		credit_account="221 - Bankovní účty CZK - PXG",
+		cost_center="Main - PXG",
+		remark="mzdy",
+		reference_no="3",
+		reference_date="2026-06-11",
+	)
+	assert payload["cheque_no"] == "3"
+	assert payload["cheque_date"] == "2026-06-11"
+	payload_default = journal_entry_payload(
+		company="c",
+		posting_date="2026-06-11",
+		amount=1.0,
+		debit_account="a",
+		credit_account="b",
+		cost_center=None,
+		remark="r",
+	)
+	assert payload_default["cheque_no"]
+	assert payload_default["cheque_date"] == "2026-06-11"

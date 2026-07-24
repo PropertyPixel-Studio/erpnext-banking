@@ -434,6 +434,8 @@ def _create_auto_je(bt, settings, rule) -> None:
 		credit_account=_setting(settings, "je_contra_account", DEFAULT_JE_CONTRA_ACCOUNT),
 		cost_center=_setting(settings, "default_cost_center", DEFAULT_COST_CENTER),
 		remark=build_je_remark(rule.get("remark_template"), bt.description),
+		reference_no=(bt.reference_number or bt.name),
+		reference_date=bt.date,
 	)
 	je = frappe.get_doc(payload)
 	je.insert(ignore_permissions=True)
