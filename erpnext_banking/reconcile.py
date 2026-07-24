@@ -640,18 +640,37 @@ def _existing_voucher_pools(gl: str, company: str):
 		"Payment Entry",
 		filters={"docstatus": 1, "clearance_date": ["is", "not set"], "company": company},
 		fields=[
-			"name", "posting_date", "payment_type",
-			"paid_amount", "received_amount", "paid_from", "paid_to",
+			"name",
+			"posting_date",
+			"payment_type",
+			"paid_amount",
+			"received_amount",
+			"paid_from",
+			"paid_to",
 		],
 	)
 	for p in pes:
 		d = getdate(p.posting_date)
 		if p.payment_type == "Pay" and p.paid_from == gl:
-			out.append({"key": ("PE", p.name), "doctype": "Payment Entry", "name": p.name,
-						"amount": float(p.paid_amount or 0), "date": d})
+			out.append(
+				{
+					"key": ("PE", p.name),
+					"doctype": "Payment Entry",
+					"name": p.name,
+					"amount": float(p.paid_amount or 0),
+					"date": d,
+				}
+			)
 		elif p.payment_type == "Receive" and p.paid_to == gl:
-			inc.append({"key": ("PE", p.name), "doctype": "Payment Entry", "name": p.name,
-						"amount": float(p.received_amount or p.paid_amount or 0), "date": d})
+			inc.append(
+				{
+					"key": ("PE", p.name),
+					"doctype": "Payment Entry",
+					"name": p.name,
+					"amount": float(p.received_amount or p.paid_amount or 0),
+					"date": d,
+				}
+			)
 
 	je_meta = {
 		j.name: j.posting_date
@@ -672,11 +691,25 @@ def _existing_voucher_pools(gl: str, company: str):
 			credit = float(r.credit_in_account_currency or 0)
 			debit = float(r.debit_in_account_currency or 0)
 			if credit > 0:  # money out of the bank → matches a withdrawal
-				out.append({"key": ("JE", r.parent), "doctype": "Journal Entry", "name": r.parent,
-							"amount": credit, "date": d})
+				out.append(
+					{
+						"key": ("JE", r.parent),
+						"doctype": "Journal Entry",
+						"name": r.parent,
+						"amount": credit,
+						"date": d,
+					}
+				)
 			elif debit > 0:  # money into the bank → matches a deposit
-				inc.append({"key": ("JE", r.parent), "doctype": "Journal Entry", "name": r.parent,
-							"amount": debit, "date": d})
+				inc.append(
+					{
+						"key": ("JE", r.parent),
+						"doctype": "Journal Entry",
+						"name": r.parent,
+						"amount": debit,
+						"date": d,
+					}
+				)
 	return out, inc
 
 
@@ -689,11 +722,11 @@ def _match_existing_payments(settings) -> int:
 	`auto_reconcile_incoming` is on. Never creates a voucher — only links existing ones via
 	the stock Bank Reconciliation Tool, so it cannot double-pay.
 	"""
-	from frappe.utils import add_days, getdate
-	from frappe.utils import today as _today
 	from erpnext.accounts.doctype.bank_reconciliation_tool.bank_reconciliation_tool import (
 		reconcile_vouchers,
 	)
+	from frappe.utils import add_days, getdate
+	from frappe.utils import today as _today
 
 	allow_out = bool(settings.auto_reconcile_outgoing)
 	allow_in = bool(settings.auto_reconcile_incoming)
@@ -736,9 +769,9 @@ def _match_existing_payments(settings) -> int:
 		try:
 			reconcile_vouchers(
 				bt.name,
-				frappe.as_json([
-					{"payment_doctype": match["doctype"], "payment_name": match["name"], "amount": amount}
-				]),
+				frappe.as_json(
+					[{"payment_doctype": match["doctype"], "payment_name": match["name"], "amount": amount}]
+				),
 			)
 			used.add(match["key"])
 			linked += 1
