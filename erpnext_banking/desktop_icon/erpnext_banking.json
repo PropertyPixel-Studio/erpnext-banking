@@ -1,0 +1,21 @@
+{
+ "app": "erpnext_banking",
+ "creation": "2026-10-15 12:00:00.000000",
+ "docstatus": 0,
+ "doctype": "Desktop Icon",
+ "hidden": 0,
+ "icon": "landmark",
+ "icon_type": "Link",
+ "idx": 0,
+ "label": "ERPNext Banking",
+ "link_to": "ERPNext Banking",
+ "link_type": "Workspace Sidebar",
+ "modified": "2026-10-15 12:00:00.000000",
+ "modified_by": "Administrator",
+ "name": "ERPNext Banking",
+ "owner": "Administrator",
+ "parent_icon": "",
+ "restrict_removal": 0,
+ "roles": [],
+ "standard": 1
+}
