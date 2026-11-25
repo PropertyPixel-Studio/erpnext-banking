@@ -156,7 +156,14 @@ def link_previous_import(doc, parsed: ParsedFile) -> None:
 
 
 def live_imports(company: str, rok: int, mesic: int, exclude: str | None = None) -> list:
-	filters = {"company": company, "rok": rok, "mesic": mesic, "status": ["in", LIVE_STATUSES]}
+	# a completed cancelling report has no slips, there is nothing in it to replace
+	filters = {
+		"company": company,
+		"rok": rok,
+		"mesic": mesic,
+		"status": ["in", LIVE_STATUSES],
+		"typ_podani": ["!=", "S"],
+	}
 	if exclude:
 		filters["name"] = ["!=", exclude]
 	return frappe.get_all(IMPORT, filters=filters, fields=["name", "file_sha256"], order_by="creation desc")
@@ -666,9 +673,16 @@ class _ImportCache:
 		for imp in self.docs.values():
 			if not any(r.status in (R_VYTVORENA, R_ODESLANA) for r in imp.rows):
 				imp.status = final_status
+				clear_ik_mpsv(imp)
 			imp.flags.jmhz_internal = True
 			imp.save(ignore_permissions=True)
 			imp.flags.jmhz_internal = False
+
+
+def clear_ik_mpsv(imp) -> None:
+	"""A cancelled or replaced import is never processed again: IK MPSV stays only in JMHZ Person."""
+	for row in imp.rows:
+		row.ik_mpsv = None
 
 
 def cancel_person(imp, employee: str) -> None:
@@ -682,9 +696,14 @@ def cancel_person(imp, employee: str) -> None:
 		fields=["name", "docstatus"],
 	):
 		if slip.docstatus == 1:
-			frappe.get_doc("Salary Slip", slip.name).cancel()
+			submitted = frappe.get_doc("Salary Slip", slip.name)
+			submitted.flags.jmhz_internal = True  # guards.salary_slip_before_cancel
+			submitted.cancel()
 		else:
-			frappe.delete_doc("Salary Slip", slip.name, ignore_permissions=True, force=True)
+			# permanently: Deleted Document would keep the amounts readable for System Manager
+			frappe.delete_doc(
+				"Salary Slip", slip.name, ignore_permissions=True, force=True, delete_permanently=True
+			)
 			for row in imp.rows:
 				if row.salary_slip == slip.name:
 					row.salary_slip = None
@@ -711,6 +730,7 @@ def cancel_import(doc) -> dict:
 		}:
 			cancel_person(doc, employee)
 		doc.status = ZRUSENO
+		clear_ik_mpsv(doc)
 		doc.flags.jmhz_internal = True
 		doc.save(ignore_permissions=True)
 		doc.flags.jmhz_internal = False
