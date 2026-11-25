@@ -6,7 +6,13 @@ the standard `SalarySlip.email_salary_slip()`: PDF of the ERPNext slip, recipien
 `Employee.prefered_email`, template and encryption from Payroll Settings.
 
 Cancelling or replacing a slip never sends an e-mail.
+
+HRMS has one more whitelisted path to `email_salary_slip`: the list action "Email Salary
+Slips" (`enqueue_email_salary_slips`, needs only read permission). It is overridden in
+hooks.py by `enqueue_email_salary_slips` below, which applies the same mode.
 """
+
+import json
 
 import frappe
 from frappe import _
@@ -99,3 +105,51 @@ def send_slip(name: str) -> dict:
 	if status == NO_EMAIL:
 		frappe.throw(_("Zaměstnanec nemá vyplněný e-mail pro zasílání (Preferred Email)."))
 	return {"status": status}
+
+
+@frappe.whitelist(methods=["POST"])
+def enqueue_email_salary_slips(names: list | str) -> None:
+	"""Override of the HRMS list action "Email Salary Slips" (`override_whitelisted_methods`).
+
+	HRMS would e-mail every selected slip, drafts included, whatever `email_mode` says. Here only
+	HR Manager may send, only submitted slips go out and the mode decides who gets one.
+	"""
+	frappe.only_for("HR Manager")
+	if isinstance(names, str):
+		names = json.loads(names)
+	current_mode = mode()
+	if current_mode == MODE_OFF:
+		frappe.throw(_("Odesílání pásek e-mailem je v JMHZ Settings vypnuté."))
+	testers = test_employees()
+	to_send = []
+	for name in names:
+		frappe.has_permission("Salary Slip", "read", name, throw=True)
+		slip = frappe.db.get_value("Salary Slip", name, ["employee", "docstatus"], as_dict=True)
+		if slip.docstatus == 1 and allowed(slip.employee, current_mode, testers):
+			to_send.append(name)
+	if to_send:
+		frappe.enqueue(
+			"erpnext_banking.jmhz.mailer.email_slips",
+			names=to_send,
+			now=frappe.in_test,
+			enqueue_after_commit=True,
+		)
+	frappe.msgprint(
+		_("Pásek zařazených k odeslání: {0}. Odmítnuto podle režimu nebo stavu pásky: {1}.").format(
+			len(to_send), len(names) - len(to_send)
+		)
+	)
+
+
+def email_slips(names: list[str]) -> None:
+	"""Background job of the list action. The mode is checked again when the job runs."""
+	current_mode = mode()
+	testers = test_employees()
+	for name in names:
+		slip = frappe.db.get_value("Salary Slip", name, ["employee", "docstatus"], as_dict=True)
+		if not slip or slip.docstatus != 1 or not allowed(slip.employee, current_mode, testers):
+			continue
+		try:
+			_send(name)
+		except Exception:
+			frappe.log_error(title="JMHZ: odeslání pásky e-mailem")
