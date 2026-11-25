@@ -45,7 +45,7 @@ R_ZRUSENO = "Zrušeno"
 ROW_DONE = (R_PRIPRAVENO, R_BEZ_PRIJMU, R_PRESKOCENO, R_JIZ_IMPORTOVANO)
 
 # parser issues that block the row (P02 is resolved by a manual deduction)
-PARSER_BLOCKING = {"P01", "P03", "P04", "P05", "P06", "P07", "P08", "P12"}
+PARSER_BLOCKING = {"P01", "P03", "P04", "P05", "P06", "P07", "P08", "P12", "P13"}
 TOLERANCE = 0.005
 
 
@@ -84,21 +84,20 @@ def create_import(content: bytes, file_name: str | None = None, company: str | N
 	except JmhzParseError as e:
 		frappe.throw(_issue_text(e.code, e.message), title=_("Soubor nejde importovat"))
 
-	if parsed.typ_podani != "R":
-		# corrective and cancelling reports are handled in a separate flow (SPEC §6.5)
-		frappe.throw(
-			_("Opravné a stornovací podání (typPodani {0}) zatím import nepodporuje.").format(
-				parsed.typ_podani
-			),
-			title=_("Soubor nejde importovat"),
-		)
-
 	company = company or settings().company
 	if not company:
 		frappe.throw(_("V JMHZ Settings není nastavená firma."))
 
 	doc = frappe.new_doc(IMPORT)
 	fill_import(doc, parsed, company)
+	link_previous_import(doc, parsed)
+
+	if doc.typ_podani != "S":
+		refresh_rows(doc)
+		income_rows = [r for r in doc.rows if row_has_income(r)]
+		if income_rows and all(r.status == R_JIZ_IMPORTOVANO for r in income_rows):
+			frappe.throw(_("Soubor už byl naimportován, všechny osoby z něj už mají pásku."))
+
 	doc.flags.jmhz_internal = True
 	doc.insert(ignore_permissions=True)
 	doc.flags.jmhz_internal = False
@@ -127,6 +126,75 @@ def fill_import(doc, parsed: ParsedFile, company: str) -> None:
 	paired = dict(frappe.get_all(PERSON, fields=["ik_mpsv", "employee"], as_list=True))
 	for person in parsed.persons:
 		doc.append("rows", row_from_person(person, paired.get(person.ik_mpsv) if person.ik_mpsv else None))
+
+
+def link_previous_import(doc, parsed: ParsedFile) -> None:
+	"""Decide how the file relates to live imports of the same period (SPEC §6.5)."""
+	live = live_imports(doc.company, doc.rok, doc.mesic)
+	notes = []
+	if doc.typ_podani == "S":
+		# storno cancels the whole report of the period (MPSV: Pravidla podání JMHZ 1.4.7)
+		doc.set("rows", [])
+		if live:
+			doc.replaces = live[0].name
+			notes.append("Storno podání: tlačítko „Provést storno“ zruší všechny pásky z JMHZ za období.")
+		else:
+			notes.append("Pro období neexistuje živý import, storno se jen zaznamená.")
+	elif live:
+		same_file = any(i.file_sha256 == parsed.sha256 for i in live)
+		if doc.typ_podani == "O" or not same_file:
+			doc.replaces = live[0].name
+		if doc.typ_podani == "R" and not same_file:
+			notes.append(
+				"Pro období už existuje import z jiného souboru. Pásky osob ze souboru se nahradí "
+				"až po potvrzení nahrazení."
+			)
+	elif doc.typ_podani == "O":
+		notes.append("Pro období neexistuje živý import, opravné podání se zpracuje jako řádné.")
+	if notes:
+		doc.issues = "\n".join([*(doc.issues or "").splitlines(), *notes])
+
+
+def live_imports(company: str, rok: int, mesic: int, exclude: str | None = None) -> list:
+	filters = {"company": company, "rok": rok, "mesic": mesic, "status": ["in", LIVE_STATUSES]}
+	if exclude:
+		filters["name"] = ["!=", exclude]
+	return frappe.get_all(IMPORT, filters=filters, fields=["name", "file_sha256"], order_by="creation desc")
+
+
+def replace_mode(doc) -> bool:
+	"""Persons of the file replace their slips from earlier imports of the period."""
+	return doc.typ_podani == "O" or bool(doc.replaces)
+
+
+def jmhz_slips(employee: str, start, end, exclude_import: str | None = None) -> list:
+	"""Live (draft or submitted) slips of the period created by a JMHZ import."""
+	slips = frappe.get_all(
+		"Salary Slip",
+		filters={
+			"employee": employee,
+			"start_date": start,
+			"end_date": end,
+			"docstatus": ["!=", 2],
+			"jmhz_import": ["is", "set"],
+		},
+		fields=["name", "jmhz_import", "jmhz_id_ppv", "docstatus"],
+	)
+	return [s for s in slips if s.jmhz_import != exclude_import]
+
+
+def already_imported(doc, row, start, end) -> bool:
+	"""The person already has a live slip from another import of the same file."""
+	if not row.employee or not doc.file_sha256:
+		return False
+	for slip in jmhz_slips(row.employee, start, end, exclude_import=doc.name):
+		if frappe.db.get_value(IMPORT, slip.jmhz_import, "file_sha256") == doc.file_sha256:
+			return True
+	return False
+
+
+def _ppv_set(value: str | None) -> set[str]:
+	return {p.strip() for p in (value or "").split(",") if p.strip()}
 
 
 def row_from_person(person: Person, employee: str | None) -> dict:
@@ -223,6 +291,8 @@ def row_status(doc, row, start: dt.date, end: dt.date) -> tuple[str, list[str]]:
 		if not (row.skip_reason or "").strip():
 			frappe.throw(_("U přeskočené osoby {0} vyplňte důvod.").format(row.pseudonym))
 		return R_PRESKOCENO, []
+	if already_imported(doc, row, start, end):
+		return R_JIZ_IMPORTOVANO, []
 	if not row_has_income(row):
 		return R_BEZ_PRIJMU, []
 	if codes & PARSER_BLOCKING:
@@ -251,8 +321,17 @@ def row_status(doc, row, start: dt.date, end: dt.date) -> tuple[str, list[str]]:
 		return R_BLOKOVANO, [_issue_text("I05", "Zaměstnanec nastoupil po konci období.")]
 	if emp.company != doc.company:
 		return R_BLOKOVANO, [_issue_text("I06", "Zaměstnanec patří jiné firmě.")]
-	if existing_slip(row.employee, start, end, exclude_import=doc.name):
+	replacing = replace_mode(doc)
+	if existing_slip(row.employee, start, end, exclude_import=doc.name, exclude_jmhz=replacing):
 		return R_BLOKOVANO, [_issue_text("I07", "Zaměstnanec už má za toto období jinou výplatní pásku.")]
+	if replacing:
+		for old in jmhz_slips(row.employee, start, end, exclude_import=doc.name):
+			if len(_ppv_set(old.jmhz_id_ppv)) > len(_ppv_set(row.id_ppv)):  # SPEC §6.5 (I11)
+				return R_BLOKOVANO, [
+					_issue_text(
+						"I11", "Původní páska má víc pracovněprávních vztahů než opravný řádek; řešte ručně."
+					)
+				]
 	if not has_holiday_list(row.employee, start, end):
 		return R_BLOKOVANO, [_issue_text("I08", "Zaměstnanec ani firma nemá přiřazený Holiday List.")]
 	if flt(row.k_vyplate) - flt(row.rucni_srazka) < 0:
@@ -260,10 +339,16 @@ def row_status(doc, row, start: dt.date, end: dt.date) -> tuple[str, list[str]]:
 	return R_PRIPRAVENO, []
 
 
-def existing_slip(employee: str, start, end, exclude_import: str | None = None) -> str | None:
+def existing_slip(
+	employee: str, start, end, exclude_import: str | None = None, exclude_jmhz: bool = False
+) -> str | None:
+	"""Another live slip of the period. With `exclude_jmhz`, slips from JMHZ imports do not count
+	(they are replaced)."""
 	filters = {"employee": employee, "start_date": start, "end_date": end, "docstatus": ["!=", 2]}
 	for slip in frappe.get_all("Salary Slip", filters=filters, fields=["name", "jmhz_import"]):
 		if exclude_import and slip.jmhz_import == exclude_import:
+			continue
+		if exclude_jmhz and slip.jmhz_import:
 			continue
 		return slip.name
 	return None
@@ -276,6 +361,10 @@ def has_holiday_list(employee: str, start, end) -> bool:
 
 
 def can_create_slips(doc) -> bool:
+	if doc.typ_podani == "S":
+		return False
+	if doc.typ_podani == "R" and doc.replaces and not doc.replace_confirmed:
+		return False
 	return (
 		doc.status == NAHLED
 		and any(r.status == R_PRIPRAVENO for r in doc.rows)
@@ -304,13 +393,20 @@ def create_slips(doc) -> dict:
 	current = None
 	try:
 		created = 0
+		replaced = _ImportCache()
+		start, end = getdate(doc.period_start), getdate(doc.period_end)
 		for row in doc.rows:
 			if row.status != R_PRIPRAVENO:
 				continue
 			current = row.pseudonym
+			if replace_mode(doc):
+				# first cancel the person's slip and Additional Salaries from earlier imports
+				for old in jmhz_slips(row.employee, start, end, exclude_import=doc.name):
+					cancel_person(replaced.get(old.jmhz_import), row.employee)
 			row.salary_slip = create_slip_for_row(doc, row)
 			row.status = R_VYTVORENA
 			created += 1
+		replaced.save_all(final_status=NAHRAZENO)
 		doc.status = VYTVORENO
 		doc.created_slips = created
 		doc.imported_on = now_datetime()
@@ -530,3 +626,102 @@ def submit_slips(doc) -> dict:
 		frappe.db.rollback(save_point=savepoint)
 		raise
 	return {"ok": True}
+
+
+# --- cancelling (SPEC §6.5) ----------------------------------------------------
+
+
+class _ImportCache:
+	"""Earlier imports touched by a replacement or a storno, saved once at the end."""
+
+	def __init__(self):
+		self.docs = {}
+
+	def get(self, name: str):
+		if name not in self.docs:
+			self.docs[name] = frappe.get_doc(IMPORT, name)
+		return self.docs[name]
+
+	def save_all(self, final_status: str) -> None:
+		for imp in self.docs.values():
+			if not any(r.status in (R_VYTVORENA, R_ODESLANA) for r in imp.rows):
+				imp.status = final_status
+			imp.flags.jmhz_internal = True
+			imp.save(ignore_permissions=True)
+			imp.flags.jmhz_internal = False
+
+
+def cancel_person(imp, employee: str) -> None:
+	"""Cancel the slip and Additional Salaries of one person in import `imp` (doc, not saved).
+
+	Order matters: the slip rows link the Additional Salaries, so the slip goes first.
+	"""
+	for slip in frappe.get_all(
+		"Salary Slip",
+		filters={"jmhz_import": imp.name, "employee": employee, "docstatus": ["!=", 2]},
+		fields=["name", "docstatus"],
+	):
+		if slip.docstatus == 1:
+			frappe.get_doc("Salary Slip", slip.name).cancel()
+		else:
+			frappe.delete_doc("Salary Slip", slip.name, ignore_permissions=True, force=True)
+			for row in imp.rows:
+				if row.salary_slip == slip.name:
+					row.salary_slip = None
+	for name in frappe.get_all(
+		"Additional Salary",
+		filters={"jmhz_import": imp.name, "employee": employee, "docstatus": 1},
+		pluck="name",
+	):
+		frappe.get_doc("Additional Salary", name).cancel()
+	for row in imp.rows:
+		if row.employee == employee and row.status in (R_VYTVORENA, R_ODESLANA):
+			row.status = R_ZRUSENO
+
+
+def cancel_import(doc) -> dict:
+	"""Button "Zrušit import": cancel all slips and Additional Salaries of the import."""
+	if doc.status in (ZRUSENO, NAHRAZENO):
+		frappe.throw(_("Import je už zrušený nebo nahrazený."))
+	savepoint = "jmhz_cancel_import"
+	frappe.db.savepoint(savepoint)
+	try:
+		for employee in {
+			r.employee for r in doc.rows if r.employee and r.status in (R_VYTVORENA, R_ODESLANA)
+		}:
+			cancel_person(doc, employee)
+		doc.status = ZRUSENO
+		doc.flags.jmhz_internal = True
+		doc.save(ignore_permissions=True)
+		doc.flags.jmhz_internal = False
+	except Exception:
+		frappe.db.rollback(save_point=savepoint)
+		raise
+	return {"ok": True}
+
+
+def run_storno(doc) -> dict:
+	"""Button "Provést storno" on a cancelling report: cancel all JMHZ slips of the period."""
+	if doc.typ_podani != "S" or doc.status != NAHLED:
+		frappe.throw(_("Storno jde provést jen u stornovacího podání ve stavu Náhled."))
+	savepoint = "jmhz_storno"
+	frappe.db.savepoint(savepoint)
+	try:
+		touched = _ImportCache()
+		for live in live_imports(doc.company, doc.rok, doc.mesic, exclude=doc.name):
+			imp = touched.get(live.name)
+			for employee in {
+				r.employee for r in imp.rows if r.employee and r.status in (R_VYTVORENA, R_ODESLANA)
+			}:
+				cancel_person(imp, employee)
+		touched.save_all(final_status=ZRUSENO)
+		doc.status = DOKONCENO
+		doc.imported_on = now_datetime()
+		doc.imported_by = frappe.session.user
+		doc.flags.jmhz_internal = True
+		doc.save(ignore_permissions=True)
+		doc.flags.jmhz_internal = False
+	except Exception:
+		frappe.db.rollback(save_point=savepoint)
+		raise
+	return {"ok": True, "imports": list(touched.docs)}

@@ -15,8 +15,9 @@ class JMHZImport(Document):
 
 	def validate(self):
 		if self.status == importer.NAHLED:
-			importer.validate_pairing(self)
-			importer.refresh_rows(self)
+			if self.typ_podani != "S":  # a cancelling report has no rows
+				importer.validate_pairing(self)
+				importer.refresh_rows(self)
 		elif not self.flags.jmhz_internal and not self.is_new():
 			# after leaving the preview the import is read-only for users
 			frappe.throw(_("Import ve stavu {0} už nejde upravovat.").format(self.status))

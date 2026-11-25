@@ -60,3 +60,13 @@ def create_slips(name: str):
 @frappe.whitelist(methods=["POST"])
 def submit_slips(name: str):
 	return importer.submit_slips(_get_import(name))
+
+
+@frappe.whitelist(methods=["POST"])
+def cancel_import(name: str):
+	return importer.cancel_import(_get_import(name))
+
+
+@frappe.whitelist(methods=["POST"])
+def run_storno(name: str):
+	return importer.run_storno(_get_import(name))

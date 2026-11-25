@@ -350,6 +350,13 @@ def test_typ_formulare_v_opravnem_podani():
 	assert "P12" not in codes(r.persons[0])
 
 
+def test_storno_formulare_v_opravnem_podani():
+	(p,) = parse(report(hpp(typ="S"), typ_podani="O")).persons
+	assert "P13" in codes(p)
+	(p,) = parse(report(hpp(typ="R"), typ_podani="O")).persons  # newly added employment
+	assert codes(p) == set()
+
+
 def test_rocni_zuctovani_vysvetleni():
 	# 10344 includes the refund 700 from the annual tax settlement
 	(p,) = parse(report(hpp(cisty=14271, preplatek=700))).persons
