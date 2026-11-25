@@ -2,8 +2,10 @@
 
 Pure Python + pypdf, must not import frappe. The input is the summary report with
 several slips per page (one slip = one block starting with the label
-"Zaměstnanec:"). For every slip the module returns the employee name, 12 numeric
-fields and a one-page PDF cropped to the slip.
+"Zaměstnanec:"). Slips on a page are separated by a dotted horizontal line; the
+cuts follow that line. When a separator is missing, the boundary falls back to
+just above the next anchor. For every slip the module returns the employee name,
+12 numeric fields and a one-page PDF cropped to the slip.
 
 Limitation: cropping only changes the visible area. The data of the other slips
 on the same page physically stays in every cut. The cuts are for HR only and must
@@ -21,7 +23,7 @@ from decimal import Decimal, InvalidOperation
 
 from pypdf import PdfReader, PdfWriter
 from pypdf.errors import PdfReadError
-from pypdf.generic import RectangleObject
+from pypdf.generic import ContentStream, RectangleObject
 
 MAX_PDF_BYTES = 10 * 1024 * 1024
 MAX_PAGES = 50
@@ -35,6 +37,8 @@ TOP_MARGIN = 20.0
 # the value of "K výplatě" is printed below its label
 BELOW_MAX = 35.0
 NAME_MAX_X = 330.0
+# a separator is a dashed horizontal line over most of the page width
+SEPARATOR_MIN_WIDTH = 0.6
 
 # field -> label on the slip
 FIELDS = {
@@ -102,6 +106,81 @@ def _page_texts(page) -> list[_Text]:
 
 	page.extract_text(visitor_text=visit)
 	return items
+
+
+def _matmul(a: tuple, b: tuple) -> tuple:
+	"""PDF matrix product a × b, matrices as (a, b, c, d, e, f)."""
+	return (
+		a[0] * b[0] + a[1] * b[2],
+		a[0] * b[1] + a[1] * b[3],
+		a[2] * b[0] + a[3] * b[2],
+		a[2] * b[1] + a[3] * b[3],
+		a[4] * b[0] + a[5] * b[2] + b[4],
+		a[4] * b[1] + a[5] * b[3] + b[5],
+	)
+
+
+def _apply(m: tuple, x: float, y: float) -> tuple[float, float]:
+	return m[0] * x + m[2] * y + m[4], m[1] * x + m[3] * y + m[5]
+
+
+def _separators(page, reader) -> list[float]:
+	"""y of dashed horizontal lines spanning most of the page (the dotted cut lines)."""
+	try:
+		operations = ContentStream(page.get_contents(), reader).operations
+	except Exception:
+		return []
+	width = float(page.mediabox.width)
+	ctm = (1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
+	dashed = False
+	stack = []
+	current = None
+	found = set()
+	for operands, op in operations:
+		if op == b"q":
+			stack.append((ctm, dashed))
+		elif op == b"Q":
+			ctm, dashed = stack.pop() if stack else ((1.0, 0.0, 0.0, 1.0, 0.0, 0.0), False)
+		elif op == b"cm" and len(operands) == 6:
+			ctm = _matmul(tuple(float(v) for v in operands), ctm)
+		elif op == b"d" and operands:
+			dashed = len(operands[0]) > 0
+		elif op == b"m" and len(operands) == 2:
+			current = _apply(ctm, float(operands[0]), float(operands[1]))
+		elif op == b"l" and len(operands) == 2 and current is not None:
+			end = _apply(ctm, float(operands[0]), float(operands[1]))
+			if (
+				dashed
+				and abs(end[1] - current[1]) < 0.5
+				and abs(end[0] - current[0]) >= SEPARATOR_MIN_WIDTH * width
+			):
+				found.add(round(current[1], 2))
+			current = end
+	return sorted(found, reverse=True)
+
+
+def _boundaries(anchors: list[_Text], separators: list[float], page_top: float, page_bottom: float):
+	"""(bottom, top) of every slip: separators when present, otherwise just above the next anchor."""
+	out = []
+	for i, anchor in enumerate(anchors):
+		above = [y for y in separators if y > anchor.y]
+		previous_anchor = anchors[i - 1].y if i else None
+		if above and (previous_anchor is None or min(above) < previous_anchor):
+			top = min(above)
+		elif i:
+			top = out[-1][0]
+		else:
+			top = min(page_top, anchor.y + TOP_MARGIN)
+		below = [y for y in separators if y < anchor.y]
+		next_anchor = anchors[i + 1].y if i + 1 < len(anchors) else None
+		if below and (next_anchor is None or max(below) > next_anchor):
+			bottom = max(below)
+		elif next_anchor is not None:
+			bottom = next_anchor + TOP_MARGIN
+		else:
+			bottom = page_bottom
+		out.append((bottom, top))
+	return out
 
 
 def _value_right(texts: list[_Text], label: _Text) -> Decimal | None:
@@ -204,9 +283,8 @@ def split(content: bytes) -> list[PdfSlip]:
 			raise PdfSlipError(f"Strana {page_no}: nenašla se žádná páska.")
 		page_top = float(page.mediabox.top)
 		page_bottom = float(page.mediabox.bottom)
-		for i, anchor in enumerate(anchors):
-			top = min(page_top, anchor.y + TOP_MARGIN)
-			bottom = anchors[i + 1].y + TOP_MARGIN if i + 1 < len(anchors) else page_bottom
+		boxes = _boundaries(anchors, _separators(page, reader), page_top, page_bottom)
+		for i, (anchor, (bottom, top)) in enumerate(zip(anchors, boxes)):
 			block = [t for t in texts if bottom < t.y <= top]
 			name, values = _read_slip(block, anchor, page_no)
 			slips.append(

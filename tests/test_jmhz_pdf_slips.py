@@ -8,7 +8,14 @@ from pypdf import PdfReader
 
 from erpnext_banking.jmhz import pdf_slips
 from erpnext_banking.jmhz.pdf_slips import PdfSlipError, parse_number, split
-from erpnext_banking.jmhz.tests.synthetic_pdf import build_pdf, report_pdf, slip_texts, slip_values
+from erpnext_banking.jmhz.tests.synthetic_pdf import (
+	SEPARATOR_ABOVE_ANCHOR,
+	anchor_y,
+	build_pdf,
+	report_pdf,
+	slip_texts,
+	slip_values,
+)
 
 A = ("Nováková Žofie", slip_values(gross=15353, sp=1091, zp=691, hours=40.5, days=5))
 B = (
@@ -34,6 +41,30 @@ def test_dve_pasky_na_strane():
 		assert len(page) == 1
 		assert float(page[0].mediabox.bottom) == pytest.approx(s.box[0])
 		assert float(page[0].mediabox.top) == pytest.approx(s.box[1])
+
+
+SEPARATOR = round(anchor_y(1) + SEPARATOR_ABOVE_ANCHOR, 2)
+
+
+def test_rez_po_teckovane_care():
+	top, low = split(report_pdf([A, B]))
+	assert top.box[0] == pytest.approx(SEPARATOR)
+	assert low.box == (0.0, pytest.approx(SEPARATOR))
+
+
+def test_teckovana_cara_pres_transformaci():
+	top, low = split(report_pdf([A, B], shift=-15.0))
+	assert top.box[0] == pytest.approx(SEPARATOR)
+	assert low.box[1] == pytest.approx(SEPARATOR)
+
+
+@pytest.mark.parametrize("separator", [None, "solid"])
+def test_bez_teckovane_cary(separator):
+	# no dotted line (a plain line does not count): the boundary falls back to just above the next anchor
+	top, low = split(report_pdf([A, B], separator=separator))
+	assert top.box[0] == pytest.approx(anchor_y(1) + pdf_slips.TOP_MARGIN)
+	assert low.box[1] == pytest.approx(top.box[0])
+	assert top.fields == {k: Decimal(str(v)) for k, v in A[1].items()}
 
 
 def test_tri_pasky_na_dvou_stranach():
