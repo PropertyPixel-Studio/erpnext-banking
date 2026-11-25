@@ -3,8 +3,8 @@ name: Lint
 on:
   push:
     branches: [main]
+  # every PR, also stacked PRs whose base is not main
   pull_request:
-    branches: [main]
 
 jobs:
   lint:
@@ -20,3 +20,16 @@ jobs:
         run: ruff check erpnext_banking tests
       - name: Run ruff format check
         run: ruff format --check erpnext_banking tests
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - name: Install test dependencies
+        # frappe is stubbed in tests/conftest.py; pypdf is pinned by Frappe 16.60.2
+        run: pip install "pytest>=8,<9" requests requests-mock "defusedxml>=0.7.1" "pypdf==6.21.4"
+      - name: Run unit tests
+        run: pytest -q tests

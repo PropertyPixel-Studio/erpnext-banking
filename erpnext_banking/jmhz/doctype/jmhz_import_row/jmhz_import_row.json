@@ -1,0 +1,291 @@
+{
+ "actions": [],
+ "creation": "2026-11-25 12:00:00",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "pseudonym",
+  "employee",
+  "employee_name",
+  "status",
+  "k_vyplate",
+  "issues",
+  "column_break_ident",
+  "ik_mpsv",
+  "id_ppv",
+  "salary_slip",
+  "skip",
+  "skip_reason",
+  "section_amounts",
+  "zuctovano",
+  "cisty_prijem",
+  "danovy_bonus",
+  "zdanitelna_mzda",
+  "vypoctena_dan",
+  "column_break_amounts",
+  "rucni_srazka",
+  "rucni_srazka_poznamka",
+  "sp_zamestnavatel",
+  "zp_zamestnavatel",
+  "section_hours",
+  "odpracovane_hodiny",
+  "odpracovane_dny",
+  "column_break_hours",
+  "hodiny_dovolena",
+  "neodpracovane_hodiny",
+  "section_pdf",
+  "slip_pdf",
+  "pdf_check",
+  "pdf_check_detail",
+  "column_break_pdf",
+  "email_status",
+  "lines_json",
+  "pdf_fields"
+ ],
+ "fields": [
+  {
+   "columns": 1,
+   "fieldname": "pseudonym",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Osoba",
+   "read_only": 1
+  },
+  {
+   "columns": 2,
+   "fieldname": "employee",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Zaměstnanec",
+   "options": "Employee"
+  },
+  {
+   "fetch_from": "employee.employee_name",
+   "fieldname": "employee_name",
+   "fieldtype": "Data",
+   "label": "Jméno",
+   "read_only": 1
+  },
+  {
+   "columns": 2,
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Stav",
+   "options": "Připraveno\nNenapárováno\nBlokováno\nBez příjmu\nPřeskočeno\nJiž importováno\nPáska vytvořena\nPáska odeslána\nZrušeno",
+   "read_only": 1
+  },
+  {
+   "columns": 1,
+   "fieldname": "k_vyplate",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "K výplatě",
+   "read_only": 1
+  },
+  {
+   "columns": 2,
+   "fieldname": "issues",
+   "fieldtype": "Small Text",
+   "in_list_view": 1,
+   "label": "Hlášky",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_ident",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "ik_mpsv",
+   "fieldtype": "Data",
+   "label": "IK MPSV",
+   "permlevel": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "id_ppv",
+   "fieldtype": "Data",
+   "label": "ID PPV",
+   "read_only": 1
+  },
+  {
+   "fieldname": "salary_slip",
+   "fieldtype": "Link",
+   "label": "Výplatní páska",
+   "options": "Salary Slip",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "skip",
+   "fieldtype": "Check",
+   "label": "Přeskočit"
+  },
+  {
+   "depends_on": "skip",
+   "fieldname": "skip_reason",
+   "fieldtype": "Small Text",
+   "label": "Důvod přeskočení",
+   "mandatory_depends_on": "skip"
+  },
+  {
+   "fieldname": "section_amounts",
+   "fieldtype": "Section Break",
+   "label": "Částky z JMHZ"
+  },
+  {
+   "fieldname": "zuctovano",
+   "fieldtype": "Currency",
+   "label": "Zúčtovaný příjem (10286)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cisty_prijem",
+   "fieldtype": "Currency",
+   "label": "Čistý příjem (10344)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "danovy_bonus",
+   "fieldtype": "Currency",
+   "label": "Daňový bonus (10306)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "zdanitelna_mzda",
+   "fieldtype": "Currency",
+   "label": "Zdanitelná mzda (10297)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "vypoctena_dan",
+   "fieldtype": "Currency",
+   "label": "Vypočtená daň (10298)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_amounts",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Exekuce a jiné srážky, které v JMHZ nejsou.",
+   "fieldname": "rucni_srazka",
+   "fieldtype": "Currency",
+   "label": "Ruční srážka"
+  },
+  {
+   "fieldname": "rucni_srazka_poznamka",
+   "fieldtype": "Small Text",
+   "label": "Poznámka k ruční srážce"
+  },
+  {
+   "fieldname": "sp_zamestnavatel",
+   "fieldtype": "Currency",
+   "label": "SP zaměstnavatel (10481)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "zp_zamestnavatel",
+   "fieldtype": "Currency",
+   "label": "ZP zaměstnavatel (10482)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_hours",
+   "fieldtype": "Section Break",
+   "label": "Odpracovaná doba"
+  },
+  {
+   "fieldname": "odpracovane_hodiny",
+   "fieldtype": "Float",
+   "label": "Odpracované hodiny (10268)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "odpracovane_dny",
+   "fieldtype": "Float",
+   "label": "Odpracované dny (10267)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_hours",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "hodiny_dovolena",
+   "fieldtype": "Float",
+   "label": "Hodiny dovolené (10279)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "neodpracovane_hodiny",
+   "fieldtype": "Float",
+   "label": "Neodpracované hodiny (10275)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_pdf",
+   "fieldtype": "Section Break",
+   "label": "PDF páska a e-mail"
+  },
+  {
+   "fieldname": "slip_pdf",
+   "fieldtype": "Attach",
+   "label": "PDF páska ze mzdového systému (jen pro vedení)",
+   "read_only": 1
+  },
+  {
+   "default": "Bez PDF",
+   "fieldname": "pdf_check",
+   "fieldtype": "Select",
+   "label": "Kontrola PDF",
+   "options": "Bez PDF\nShoda\nNeshoda\nPotvrzeno ručně",
+   "read_only": 1
+  },
+  {
+   "fieldname": "pdf_check_detail",
+   "fieldtype": "Small Text",
+   "label": "Nesouhlasící pole",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_pdf",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "Neodesláno",
+   "fieldname": "email_status",
+   "fieldtype": "Select",
+   "label": "E-mail",
+   "options": "Neodesláno\nZařazeno k odeslání\nPřeskočeno (režim)\nBez e-mailu",
+   "read_only": 1
+  },
+  {
+   "fieldname": "lines_json",
+   "fieldtype": "JSON",
+   "hidden": 1,
+   "label": "Řádky pásky",
+   "read_only": 1
+  },
+  {
+   "fieldname": "pdf_fields",
+   "fieldtype": "JSON",
+   "hidden": 1,
+   "label": "Hodnoty z PDF pásky",
+   "read_only": 1
+  }
+ ],
+ "istable": 1,
+ "links": [],
+ "modified": "2026-11-25 22:00:00",
+ "modified_by": "Administrator",
+ "module": "JMHZ",
+ "name": "JMHZ Import Row",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 0
+}

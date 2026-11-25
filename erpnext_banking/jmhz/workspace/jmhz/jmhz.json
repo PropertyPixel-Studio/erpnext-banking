@@ -1,0 +1,51 @@
+{
+ "charts": [],
+ "content": "[{\"type\": \"header\", \"data\": {\"text\": \"<span class='h4'><b>Výplatní pásky z JMHZ</b></span>\", \"col\": 12}}, {\"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"JMHZ Import\", \"col\": 4}}, {\"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"JMHZ Person\", \"col\": 4}}, {\"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"Salary Slip\", \"col\": 4}}, {\"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"JMHZ Settings\", \"col\": 4}}]",
+ "creation": "2026-11-25 12:00:00",
+ "docstatus": 0,
+ "doctype": "Workspace",
+ "for_user": "",
+ "hide_custom": 0,
+ "icon": "file-text",
+ "idx": 0,
+ "is_hidden": 0,
+ "label": "JMHZ",
+ "links": [],
+ "modified": "2026-11-25 12:00:00",
+ "modified_by": "Administrator",
+ "module": "JMHZ",
+ "name": "JMHZ",
+ "number_cards": [],
+ "owner": "Administrator",
+ "public": 1,
+ "quick_lists": [],
+ "roles": [
+  {
+   "role": "HR Manager"
+  }
+ ],
+ "sequence_id": 0.0,
+ "shortcuts": [
+  {
+   "label": "JMHZ Import",
+   "link_to": "JMHZ Import",
+   "type": "DocType"
+  },
+  {
+   "label": "JMHZ Person",
+   "link_to": "JMHZ Person",
+   "type": "DocType"
+  },
+  {
+   "label": "Salary Slip",
+   "link_to": "Salary Slip",
+   "type": "DocType"
+  },
+  {
+   "label": "JMHZ Settings",
+   "link_to": "JMHZ Settings",
+   "type": "DocType"
+  }
+ ],
+ "title": "JMHZ"
+}

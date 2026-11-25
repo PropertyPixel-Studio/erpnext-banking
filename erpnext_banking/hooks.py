@@ -9,7 +9,10 @@ app_color = "blue"
 app_email = "krysta@propix.cz"
 app_license = "MIT"
 
-required_apps = ["erpnext"]
+required_apps = ["erpnext", "hrms"]
+
+# JMHZ module: idempotent setup of salary components, structure and settings
+after_migrate = "erpnext_banking.jmhz.setup.after_migrate"
 
 
 scheduler_events = {
@@ -28,4 +31,29 @@ doc_events = {
 	"Sales Invoice": {"on_submit": "erpnext_banking.reconcile.on_invoice_submit"},
 	"Purchase Invoice": {"on_submit": "erpnext_banking.reconcile.on_invoice_submit"},
 	"Payment Request": {"on_submit": "erpnext_banking.reconcile.on_payment_request_submit"},
+	# JMHZ module (SPEC §7)
+	"Salary Slip": {
+		"before_submit": "erpnext_banking.jmhz.guards.salary_slip_before_submit",
+		"before_cancel": "erpnext_banking.jmhz.guards.salary_slip_before_cancel",
+		"after_delete": "erpnext_banking.jmhz.guards.scrub_deleted",
+	},
+	"Payroll Entry": {"validate": "erpnext_banking.jmhz.guards.block_payroll_entry"},
+	# no IK MPSV or amounts in Deleted Document (System Manager can read it)
+	"Additional Salary": {"after_delete": "erpnext_banking.jmhz.guards.scrub_deleted"},
+	"JMHZ Import": {"after_delete": "erpnext_banking.jmhz.guards.scrub_deleted"},
+	"JMHZ Person": {"after_delete": "erpnext_banking.jmhz.guards.scrub_deleted"},
 }
+
+# JMHZ module: button "Poslat pásku e-mailem" on the salary slip
+doctype_js = {"Salary Slip": "public/js/jmhz_salary_slip.js"}
+
+# JMHZ module: the HRMS list action "Email Salary Slips" respects JMHZ Settings.email_mode
+override_whitelisted_methods = {
+	"hrms.payroll.doctype.salary_slip.salary_slip.enqueue_email_salary_slips": (
+		"erpnext_banking.jmhz.mailer.enqueue_email_salary_slips"
+	)
+}
+
+# JMHZ module: users without an HR role do not see draft and cancelled salary slips
+permission_query_conditions = {"Salary Slip": "erpnext_banking.jmhz.guards.salary_slip_query"}
+has_permission = {"Salary Slip": "erpnext_banking.jmhz.guards.salary_slip_has_permission"}

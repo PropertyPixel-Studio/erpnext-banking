@@ -1,6 +1,8 @@
 # frappe -- https://github.com/frappe/frappe is installed via 'bench init'
 requests>=2.31.0
+# JMHZ module: safe XML parsing (no DTD / entities)
+defusedxml>=0.7.1
 
 # Dev-only (not installed by bench, jen pro lokální pytest)
-# pytest>=8
+# pytest>=8,<9   (pytest 9 breaks monkeypatch on the MagicMock frappe stub)
 # requests-mock>=1.11
