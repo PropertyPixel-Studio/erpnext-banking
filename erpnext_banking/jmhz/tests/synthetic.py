@@ -35,6 +35,8 @@ def form(
 	prumerny_vydelek=None,
 	preplatek=None,
 	raw_zuct=None,
+	zaklad_dane=None,
+	vypoctena_dan=None,
 ):
 	"""One employment form. `rozpad` / `nahrady` / `srazky` are {element: value}."""
 	ident = ""
@@ -48,7 +50,14 @@ def form(
 		prijmy = f"<form:zuctovanoCelkem>{raw_zuct if raw_zuct is not None else zuct}</form:zuctovanoCelkem>"
 		if osvobozeno is not None:
 			prijmy += f"<form:osvobozenoCelkem>{osvobozeno}</form:osvobozenoCelkem>"
-		zaloha = f"<form:danZalohaPoSleve>{zal}</form:danZalohaPoSleve><form:danBonus>{bonus}</form:danBonus>"
+		zaloha = ""
+		if zaklad_dane is not None:
+			zaloha += f"<form:zakladDane>{zaklad_dane}</form:zakladDane>"
+		if vypoctena_dan is not None:
+			zaloha += f"<form:vypoctenaZaloha>{vypoctena_dan}</form:vypoctenaZaloha>"
+		zaloha += (
+			f"<form:danZalohaPoSleve>{zal}</form:danZalohaPoSleve><form:danBonus>{bonus}</form:danBonus>"
+		)
 		zvlastni = ""
 		if srd and ver == "1.5":
 			zaloha += f"<form:srazenaDanPar6>{srd}</form:srazenaDanPar6>"

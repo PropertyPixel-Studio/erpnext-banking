@@ -209,6 +209,8 @@ def row_from_person(person: Person, employee: str | None) -> dict:
 		"k_vyplate": person.k_vyplate,
 		"sp_zamestnavatel": person.sp_zamestnavatel,
 		"zp_zamestnavatel": person.zp_zamestnavatel,
+		"zdanitelna_mzda": person.zdanitelna_mzda,
+		"vypoctena_dan": person.vypoctena_dan,
 		"odpracovane_hodiny": person.info.get("odpracovane_hodiny"),
 		"odpracovane_dny": person.info.get("odpracovane_dny"),
 		"hodiny_dovolena": person.info.get("hodiny_dovolena"),
@@ -646,9 +648,13 @@ class _ImportCache:
 		return self.docs[name]
 
 	def save_all(self, final_status: str) -> None:
+		from erpnext_banking.jmhz import pdf_import
+
 		for imp in self.docs.values():
 			if not any(r.status in (R_VYTVORENA, R_ODESLANA) for r in imp.rows):
 				imp.status = final_status
+				if final_status == ZRUSENO:
+					pdf_import.delete_all(imp, save=False)
 			imp.flags.jmhz_internal = True
 			imp.save(ignore_permissions=True)
 			imp.flags.jmhz_internal = False
@@ -693,6 +699,9 @@ def cancel_import(doc) -> dict:
 			r.employee for r in doc.rows if r.employee and r.status in (R_VYTVORENA, R_ODESLANA)
 		}:
 			cancel_person(doc, employee)
+		from erpnext_banking.jmhz import pdf_import
+
+		pdf_import.delete_all(doc, save=False)  # cuts of printed slips go with the import
 		doc.status = ZRUSENO
 		doc.flags.jmhz_internal = True
 		doc.save(ignore_permissions=True)
