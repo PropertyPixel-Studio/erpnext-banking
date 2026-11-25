@@ -4,3 +4,4 @@
 erpnext_banking.patches.create_pi_original_amount_fields
 erpnext_banking.patches.set_fio_card_defaults
 erpnext_banking.patches.seed_bank_matching_rules
+erpnext_banking.patches.jmhz_initial_setup

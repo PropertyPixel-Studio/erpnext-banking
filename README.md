@@ -7,7 +7,12 @@ via the `variable_symbol` (VS) custom field.
 First provider: **Fio Banka** (Czech Republic). Architecture is provider-pluggable — adding a
 second bank is drop-in (see `providers/` directory).
 
-**Versions:** Frappe 16.20+, ERPNext 16.21+.
+**Versions:** Frappe 16.20+, ERPNext 16.21+. The JMHZ module needs Frappe 16.60+, ERPNext 16.60+
+and **HRMS 16.60+**.
+
+> **Requires HRMS.** Since the JMHZ module was added, `required_apps = ["erpnext", "hrms"]`: the
+> app can no longer be installed on a site without Frappe HR (its doctypes link to Salary Slip and
+> Additional Salary).
 
 ## Install
 
@@ -128,6 +133,28 @@ two fallback layers before giving up:
 Both layers are gated by the same `Auto-Reconcile Incoming` flag as the exact-VS match — there's
 no separate on/off switch. Exact-VS matching itself is unchanged: when the VS does resolve to a
 Sales Invoice or Payment Request, these fallbacks never run.
+
+## JMHZ module (salary slips from monthly employer reports)
+
+A separate Frappe module **JMHZ** in this app imports the Czech monthly employer report
+(*jednotné měsíční hlášení zaměstnavatele*, XML schema 1.4 and 1.5) into HRMS Salary Slips. HRMS
+computes nothing: every amount comes from the report and the slip only adds it up to the same
+numbers. The banking part does not depend on it.
+
+**Setup.** Nothing has to be created by hand. The patch `jmhz_initial_setup` and every `migrate`
+(`after_migrate`) run an idempotent setup that:
+
+- creates the JMHZ salary components and enforces their flags (`depends_on_payment_days = 0`,
+  `is_tax_applicable = 0`, no formula);
+- creates and submits the salary structure `Import z JMHZ` with all components at amount 0;
+- sets Payroll Settings: `disable_rounded_total = 1` and the built-in salary slip e-mail **off**
+  (it is switched off again on every migrate);
+- creates `JMHZ Settings` (company from Global Defaults);
+- assigns a technical holiday list without holidays to the company, but only if the company has
+  none (HRMS needs one to create any slip).
+
+All JMHZ doctypes (`JMHZ Import`, `JMHZ Person`, `JMHZ Settings`) are for **HR Manager** only.
+System Manager gets no access.
 
 ## Security
 
