@@ -72,12 +72,13 @@ def fmt(value, decimals: int = 0) -> str:
 	return text
 
 
-def slip_texts(anchor_y: float, name: str, values: dict) -> list[tuple[float, float, str]]:
-	x0 = 39.6
+def slip_texts(anchor_y: float, name: str, values: dict, dx: float = 0.0) -> list[tuple[float, float, str]]:
+	"""Texts of one slip; `dx` shifts the whole layout horizontally (real reports differ)."""
+	x0 = 39.6 + dx
 	texts = [
 		(x0, anchor_y, "Zaměstnanec:"),
 		(x0 + 62.2, anchor_y + 0.1, name),
-		(332.7, anchor_y + 2.3, "Stř.:"),
+		(x0 + 293.1, anchor_y + 2.3, "Stř.:"),
 		(x0, anchor_y - 16.5, "Zaměstnavatel:"),
 		(x0 + 61.5, anchor_y - 16.5, "Testovací firma s.r.o., Testovací 1, 10000 Praha"),
 	]

@@ -29,14 +29,15 @@ MAX_PDF_BYTES = 10 * 1024 * 1024
 MAX_PAGES = 50
 
 ANCHOR = "Zaměstnanec:"
-# x where the middle and the right column of the slip start (points)
-COLUMNS = (145.0, 355.0)
+# where the middle and the right column of the slip start, relative to the x of the
+# "Zaměstnanec:" anchor (the whole layout may be shifted between reports)
+COLUMN_OFFSETS = (105.4, 315.4)
 LINE_TOLERANCE = 2.5
 # the slip block starts slightly above the anchor line
 TOP_MARGIN = 20.0
 # the value of "K výplatě" is printed below its label
 BELOW_MAX = 35.0
-NAME_MAX_X = 330.0
+NAME_MAX_OFFSET = 290.4
 # a separator is a dashed horizontal line over most of the page width
 SEPARATOR_MIN_WIDTH = 0.6
 
@@ -92,8 +93,8 @@ def parse_number(text: str) -> Decimal | None:
 		return None
 
 
-def _column(x: float) -> int:
-	return sum(x >= c for c in COLUMNS)
+def _column(x: float, origin: float) -> int:
+	return sum(x >= origin + c for c in COLUMN_OFFSETS)
 
 
 def _page_texts(page) -> list[_Text]:
@@ -183,15 +184,15 @@ def _boundaries(anchors: list[_Text], separators: list[float], page_top: float, 
 	return out
 
 
-def _value_right(texts: list[_Text], label: _Text) -> Decimal | None:
-	col = _column(label.x)
+def _value_right(texts: list[_Text], label: _Text, origin: float) -> Decimal | None:
+	col = _column(label.x, origin)
 	candidates = [
 		t
 		for t in texts
 		if t is not label
 		and abs(t.y - label.y) <= LINE_TOLERANCE
 		and t.x > label.x
-		and _column(t.x) == col
+		and _column(t.x, origin) == col
 		and "%" not in t.text
 		and parse_number(t.text) is not None
 	]
@@ -215,7 +216,7 @@ def _read_slip(texts: list[_Text], anchor: _Text, page_no: int) -> tuple[str, di
 	name = " ".join(
 		t.text
 		for t in sorted(texts, key=lambda t: t.x)
-		if abs(t.y - anchor.y) <= LINE_TOLERANCE and anchor.x < t.x < NAME_MAX_X
+		if abs(t.y - anchor.y) <= LINE_TOLERANCE and anchor.x < t.x < anchor.x + NAME_MAX_OFFSET
 	).strip()
 	values: dict[str, Decimal] = {}
 	missing = []
@@ -224,7 +225,9 @@ def _read_slip(texts: list[_Text], anchor: _Text, page_no: int) -> tuple[str, di
 		if len(labels) != 1:
 			missing.append(label_text)
 			continue
-		value = _value_below(texts, labels[0]) if key in VALUE_BELOW else _value_right(texts, labels[0])
+		value = (
+			_value_below(texts, labels[0]) if key in VALUE_BELOW else _value_right(texts, labels[0], anchor.x)
+		)
 		if value is None:
 			missing.append(label_text)
 			continue
