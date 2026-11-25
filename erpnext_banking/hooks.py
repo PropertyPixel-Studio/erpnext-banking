@@ -32,8 +32,16 @@ doc_events = {
 	"Purchase Invoice": {"on_submit": "erpnext_banking.reconcile.on_invoice_submit"},
 	"Payment Request": {"on_submit": "erpnext_banking.reconcile.on_payment_request_submit"},
 	# JMHZ module (SPEC §7)
-	"Salary Slip": {"before_submit": "erpnext_banking.jmhz.guards.salary_slip_before_submit"},
+	"Salary Slip": {
+		"before_submit": "erpnext_banking.jmhz.guards.salary_slip_before_submit",
+		"before_cancel": "erpnext_banking.jmhz.guards.salary_slip_before_cancel",
+		"after_delete": "erpnext_banking.jmhz.guards.scrub_deleted",
+	},
 	"Payroll Entry": {"validate": "erpnext_banking.jmhz.guards.block_payroll_entry"},
+	# no IK MPSV or amounts in Deleted Document (System Manager can read it)
+	"Additional Salary": {"after_delete": "erpnext_banking.jmhz.guards.scrub_deleted"},
+	"JMHZ Import": {"after_delete": "erpnext_banking.jmhz.guards.scrub_deleted"},
+	"JMHZ Person": {"after_delete": "erpnext_banking.jmhz.guards.scrub_deleted"},
 }
 
 # JMHZ module: users without an HR role do not see draft and cancelled salary slips
