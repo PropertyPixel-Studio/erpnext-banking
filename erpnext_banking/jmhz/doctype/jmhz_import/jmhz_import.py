@@ -18,8 +18,9 @@ class JMHZImport(Document):
 			# rows and amounts come only from a parsed file (upload of the XML)
 			frappe.throw(_("Import JMHZ vzniká jen nahráním XML souboru."))
 		if self.status == importer.NAHLED:
-			importer.validate_pairing(self)
-			importer.refresh_rows(self)
+			if self.typ_podani != "S":  # a cancelling report has no rows
+				importer.validate_pairing(self)
+				importer.refresh_rows(self)
 		elif not self.flags.jmhz_internal:
 			# after leaving the preview the import is read-only for users
 			frappe.throw(_("Import ve stavu {0} už nejde upravovat.").format(self.status))

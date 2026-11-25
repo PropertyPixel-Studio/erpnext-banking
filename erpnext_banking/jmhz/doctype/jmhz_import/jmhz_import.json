@@ -14,10 +14,12 @@
   "status",
   "typ_podani",
   "replaces",
+  "replace_confirmed",
   "schema_version",
   "section_rows",
   "rows",
   "issues",
+  "pdf_unassigned",
   "section_audit",
   "file_name",
   "file_sha256",
@@ -100,6 +102,14 @@
    "read_only": 1
   },
   {
+   "default": "0",
+   "depends_on": "eval:doc.replaces && doc.typ_podani=='R'",
+   "description": "Pro období už existuje import z jiného souboru. Pásky osob z tohoto souboru ho nahradí.",
+   "fieldname": "replace_confirmed",
+   "fieldtype": "Check",
+   "label": "Potvrzuji nahrazení předchozího importu"
+  },
+  {
    "fieldname": "schema_version",
    "fieldtype": "Data",
    "label": "Verze schématu",
@@ -120,6 +130,13 @@
    "fieldname": "issues",
    "fieldtype": "Small Text",
    "label": "Hlášky k souboru",
+   "read_only": 1
+  },
+  {
+   "fieldname": "pdf_unassigned",
+   "fieldtype": "JSON",
+   "hidden": 1,
+   "label": "Nepřiřazené PDF pásky",
    "read_only": 1
   },
   {

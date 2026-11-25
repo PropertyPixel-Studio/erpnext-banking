@@ -153,6 +153,14 @@ def _build_person(ik: str, forms: list[_Form], schema: str, typ_podani: str, lab
 		)
 	if typ_podani == "R" and any(f.typ_formulare != "R" for f in forms):
 		r.add("P12", "block", "Formulář osoby v řádném podání není řádný (typFormulare ≠ R).")
+	if typ_podani == "O" and any(f.typ_formulare == "S" for f in forms):
+		# cancelling a single employment inside a corrective report: the slip cannot be rebuilt
+		# from the remaining data, HR resolves it manually
+		r.add(
+			"P13",
+			"block",
+			"Opravné podání stornuje pracovněprávní vztah osoby (typFormulare S); řešte ručně.",
+		)
 
 	supported = [f.body for f in forms if f.kind == C.SUPPORTED_FORM]
 	amounts: dict[str, int] = {}
@@ -165,6 +173,7 @@ def _build_person(ik: str, forms: list[_Form], schema: str, typ_podani: str, lab
 	mzda_total = nahrady_total = 0
 	sp = sp_zam = 0
 	zuctovano = cisty = osvobozeno = bonus = zp = zaloha = srazkova = zp_zam = preplatek = 0
+	zaklad_dane = vypoctena_dan = 0
 	souhrn_count = 0
 	exekuce = srazky_ozp = False
 	info: dict[str, Decimal] = {}
@@ -228,6 +237,8 @@ def _build_person(ik: str, forms: list[_Form], schema: str, typ_podani: str, lab
 			bonus += r.amount(b, C.DANOVY_BONUS.path)
 			zp += r.amount(b, C.ZDRAVOTNI_POJISTENI.path)
 			zaloha += r.amount(b, C.ZALOHA_NA_DAN.path)
+			zaklad_dane += r.amount(b, C.ZAKLAD_DANE)
+			vypoctena_dan += r.amount(b, C.VYPOCTENA_ZALOHA)
 			srazkova += r.amount(b, C.SRAZKOVA_DAN_PATH[schema])
 			zp_zam += r.amount(b, C.ZP_ZAMESTNAVATEL)
 			# signed (overpayment / underpayment), only explains P01 -> read leniently
@@ -313,6 +324,8 @@ def _build_person(ik: str, forms: list[_Form], schema: str, typ_podani: str, lab
 		exekuce=exekuce,
 		has_income=has_income,
 		issues=r.issues,
+		zdanitelna_mzda=zaklad_dane,
+		vypoctena_dan=vypoctena_dan,
 	)
 
 
