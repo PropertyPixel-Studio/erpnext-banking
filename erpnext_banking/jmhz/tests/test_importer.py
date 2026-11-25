@@ -3,6 +3,7 @@
 bench --site <site> run-tests --module erpnext_banking.jmhz.tests.test_importer
 """
 
+import json
 from unittest.mock import patch
 
 import frappe
@@ -468,8 +469,109 @@ class TestGuards(JmhzTestCase):
 		self.create(doc)
 		frappe.db.set_value(importer.IMPORT, doc.name, "status", importer.ZRUSENO)
 		slip = self.slip(doc)
+		slip.flags.jmhz_internal = True  # as if from the importer, so that the status check is reached
 		with self.assertRaises(frappe.ValidationError):
 			slip.submit()
+
+	def test_paska_jen_z_importu(self):
+		"""A JMHZ slip is submitted and cancelled only by the importer (bulk submit in the list)."""
+		emp = self.employee()
+		doc = self.import_file(hpp(ik="1000000032"), pair={"1000000032": emp})
+		self.create(doc)
+		with self.assertRaises(frappe.ValidationError):
+			self.slip(doc).submit()
+		self.assertEqual(frappe.db.get_value("Salary Slip", doc.rows[0].salary_slip, "docstatus"), 0)
+
+		importer.submit_slips(frappe.get_doc(importer.IMPORT, doc.name))
+		slip = self.slip(doc)
+		self.assertEqual(slip.docstatus, 1)
+		with self.assertRaises(frappe.ValidationError):
+			slip.cancel()
+		self.assertEqual(frappe.db.get_value("Salary Slip", slip.name, "docstatus"), 1)
+
+
+class TestErrorMessages(JmhzTestCase):
+	"""A failed "Vytvořit pásky": expected errors are shown, not logged; foreign texts never pass."""
+
+	def run_failing(self, error):
+		emp = self.employee()
+		doc = self.import_file(hpp(ik="1000000063"), pair={"1000000063": emp})
+		before = frappe.db.count("Error Log", {"method": "JMHZ: vytvoření pásek"})
+		with patch.object(importer, "create_slip_for_row", side_effect=error):
+			res = self.create(doc)
+		self.assertFalse(res["ok"])
+		logs = frappe.get_all(
+			"Error Log",
+			filters={"method": "JMHZ: vytvoření pásek"},
+			fields=["error"],
+			order_by="creation desc",
+		)
+		return res["message"], len(logs) - before, logs
+
+	def test_ocekavana_chyba_se_neloguje(self):
+		message, logged, _ = self.run_failing(frappe.ValidationError("Chybí fiskální rok"))
+		self.assertIn("Chybí fiskální rok", message)
+		self.assertEqual(logged, 0)
+
+	def test_unikatni_klic_neprozradi_hodnotu(self):
+		secret = "1000000099"
+		error = frappe.UniqueValidationError(f"Duplicate entry '{secret}' for key 'ik_mpsv'")
+		message, logged, logs = self.run_failing(error)
+		self.assertNotIn(secret, message)
+		self.assertEqual(logged, 1)
+		self.assertNotIn(secret, logs[0].error)
+
+	def test_neocekavana_chyba_bez_textu(self):
+		message, logged, _ = self.run_failing(RuntimeError("detail cizí výjimky"))
+		self.assertNotIn("detail cizí výjimky", message)
+		self.assertIn("RuntimeError", message)
+		self.assertEqual(logged, 1)
+
+	def test_import_jen_nahranim_souboru(self):
+		with self.assertRaises(frappe.ValidationError):
+			frappe.get_doc(
+				{
+					"doctype": importer.IMPORT,
+					"company": self.company,
+					"rok": ROK,
+					"mesic": MESIC,
+					"typ_podani": "R",
+					"status": importer.VYTVORENO,
+				}
+			).insert()
+
+
+class TestDeletedDocument(JmhzTestCase):
+	"""Deleted Document is readable by System Manager: no IK MPSV and no amounts may end up there."""
+
+	def deleted(self, doctype, name) -> str:
+		data = frappe.db.get_value(
+			"Deleted Document", {"deleted_doctype": doctype, "deleted_name": name}, "data"
+		)
+		self.assertTrue(data)
+		return data
+
+	def test_smazany_import(self):
+		ik = "1000000060"
+		doc = self.import_file(hpp(ik=ik))
+		frappe.delete_doc(importer.IMPORT, doc.name)
+		data = self.deleted(importer.IMPORT, doc.name)
+		self.assertNotIn(ik, data)
+		self.assertEqual(json.loads(data)["rows"], [])
+
+	def test_smazana_paska_a_parovani(self):
+		ik, emp = "1000000061", self.employee()
+		doc = self.import_file(hpp(ik=ik), pair={ik: emp})
+		self.create(doc)
+		slip = doc.rows[0].salary_slip
+		frappe.delete_doc("Salary Slip", slip, force=True)
+		data = json.loads(self.deleted("Salary Slip", slip))
+		self.assertEqual((data["earnings"], data["deductions"]), ([], []))
+		self.assertFalse(data.get("net_pay") or data.get("gross_pay") or data.get("jmhz_k_vyplate"))
+		self.assertEqual(data["employee"], emp)
+
+		frappe.delete_doc(importer.PERSON, emp)
+		self.assertNotIn(ik, self.deleted(importer.PERSON, emp))
 
 
 class TestEmployeeAccess(JmhzTestCase):
