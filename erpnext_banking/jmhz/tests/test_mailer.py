@@ -127,3 +127,29 @@ class TestMailer(JmhzTestCase):
 		self.assertEqual(res["email"]["queued"], 0)
 		self.assertEqual(doc.rows[0].email_status, mailer.NOT_SENT)
 		self.assertEqual(frappe.db.get_value("Salary Slip", doc.rows[0].salary_slip, "docstatus"), 1)
+
+	def test_hromadna_akce_hrms_respektuje_rezim(self):
+		"""The list action "Email Salary Slips" goes through the same mode check."""
+		hrms_method = "hrms.payroll.doctype.salary_slip.salary_slip.enqueue_email_salary_slips"
+		bulk = frappe.get_attr(frappe.override_whitelisted_method(hrms_method))
+		self.assertIs(bulk, mailer.enqueue_email_salary_slips)
+
+		self.set_mode(mailer.MODE_OFF)
+		doc, _ = self.run_import()
+		slips = [r.salary_slip for r in doc.rows]
+		with self.assertRaises(frappe.ValidationError):
+			bulk(names=frappe.as_json(slips))
+		self.assertEqual(self.mails_to("jmhz-mail-0@example.com"), 0)
+
+		self.set_mode(mailer.MODE_TEST, testers=[self.with_email[0]])
+		bulk(names=slips)
+		self.assertEqual(self.mails_to("jmhz-mail-0@example.com"), 1)
+		self.assertEqual(self.mails_to("jmhz-mail-1@example.com"), 0)
+
+	def test_hromadna_akce_neposle_draft(self):
+		self.set_mode(mailer.MODE_ALL)
+		emp = self.with_email[0]
+		doc = self.import_file(hpp(ik="4000000009", ppv="9000000109"), pair={"4000000009": emp})
+		self.assertTrue(self.create(doc)["ok"])
+		mailer.enqueue_email_salary_slips(names=[doc.rows[0].salary_slip])
+		self.assertEqual(self.mails_to("jmhz-mail-0@example.com"), 0)
