@@ -172,6 +172,15 @@ earlier import only after HR confirms it. A cancelling report (`S`) cancels all 
 period with **Provést storno**. **Zrušit import** cancels the slips and Additional Salaries of one
 import; the same file can then be imported again.
 
+**Printed slips (optional).** In preview or after creating the slips, **Nahrát PDF pásky** takes
+the summary report of printed payroll slips from the payroll system. The report is processed in
+memory and never stored. Each slip is cut out, matched to a row by its amounts (the name confirms
+and breaks ties) and compared with the report in 12 fields. A mismatch blocks **Odeslat pásky**
+until HR confirms it; a manual deduction entered later is checked again. The cuts are private
+Files attached to the JMHZ Import, so only HR Manager can open them. Cropping hides the rest of the
+page but does not remove it from the file, so the cuts must never be sent to employees.
+**Smazat PDF** removes them; cancelling the import removes them too.
+
 **E-mail.** The built-in HRMS e-mail on submit stays off. `JMHZ Settings.email_mode` decides who
 gets the slip after **Odeslat pásky**: `Vypnuto` (default, nobody), `Jen testovací zaměstnanci`
 or `Všem` (everyone with a preferred e-mail). The same mode applies to the button on the slip and
