@@ -9,7 +9,10 @@ app_color = "blue"
 app_email = "krysta@propix.cz"
 app_license = "MIT"
 
-required_apps = ["erpnext"]
+required_apps = ["erpnext", "hrms"]
+
+# JMHZ module: idempotent setup of salary components, structure and settings
+after_migrate = "erpnext_banking.jmhz.setup.after_migrate"
 
 
 scheduler_events = {
