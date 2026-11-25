@@ -625,7 +625,10 @@ def submit_slips(doc) -> dict:
 	except Exception:
 		frappe.db.rollback(save_point=savepoint)
 		raise
-	return {"ok": True}
+
+	from erpnext_banking.jmhz import mailer
+
+	return {"ok": True, "email": mailer.queue_for_import(doc)}
 
 
 # --- cancelling (SPEC §6.5) ----------------------------------------------------
