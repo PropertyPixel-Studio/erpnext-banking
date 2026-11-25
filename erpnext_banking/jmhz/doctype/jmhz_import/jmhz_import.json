@@ -19,6 +19,7 @@
   "section_rows",
   "rows",
   "issues",
+  "pdf_unassigned",
   "section_audit",
   "file_name",
   "file_sha256",
@@ -129,6 +130,13 @@
    "fieldname": "issues",
    "fieldtype": "Small Text",
    "label": "Hlášky k souboru",
+   "read_only": 1
+  },
+  {
+   "fieldname": "pdf_unassigned",
+   "fieldtype": "JSON",
+   "hidden": 1,
+   "label": "Nepřiřazené PDF pásky",
    "read_only": 1
   },
   {

@@ -106,7 +106,7 @@ class TestRegularImport(JmhzTestCase):
 		self.assertEqual(frappe.db.get_value(importer.PERSON, emp, "ik_mpsv"), "1000000001")
 		self.assertFalse(slip.payroll_entry)
 
-		self.assertEqual(importer.submit_slips(frappe.get_doc(importer.IMPORT, doc.name)), {"ok": True})
+		self.assertTrue(importer.submit_slips(frappe.get_doc(importer.IMPORT, doc.name))["ok"])
 		doc.reload()
 		self.assertEqual(doc.status, importer.DOKONCENO)
 		self.assertEqual(doc.rows[0].status, importer.R_ODESLANA)

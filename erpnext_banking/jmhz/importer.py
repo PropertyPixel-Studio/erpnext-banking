@@ -216,6 +216,8 @@ def row_from_person(person: Person, employee: str | None) -> dict:
 		"k_vyplate": person.k_vyplate,
 		"sp_zamestnavatel": person.sp_zamestnavatel,
 		"zp_zamestnavatel": person.zp_zamestnavatel,
+		"zdanitelna_mzda": person.zdanitelna_mzda,
+		"vypoctena_dan": person.vypoctena_dan,
 		"odpracovane_hodiny": person.info.get("odpracovane_hodiny"),
 		"odpracovane_dny": person.info.get("odpracovane_dny"),
 		"hodiny_dovolena": person.info.get("hodiny_dovolena"),
@@ -284,12 +286,15 @@ def validate_pairing(doc) -> None:
 
 
 def refresh_rows(doc) -> None:
-	"""Recompute the status of every row. Only in status Náhled."""
+	"""Recompute the status of every row and its printed slip check. Only in status Náhled."""
+	from erpnext_banking.jmhz import pdf_import
+
 	start, end = getdate(doc.period_start), getdate(doc.period_end)
 	for row in doc.rows:
 		status, extra = row_status(doc, row, start, end)
 		row.status = status
 		row.issues = "\n".join(row_parser_issue_lines(row) + extra)
+		pdf_import.recheck(row)  # the expected pay changes with the manual deduction
 
 
 def row_status(doc, row, start: dt.date, end: dt.date) -> tuple[str, list[str]]:
@@ -652,7 +657,10 @@ def submit_slips(doc) -> dict:
 	except Exception:
 		frappe.db.rollback(save_point=savepoint)
 		raise
-	return {"ok": True}
+
+	from erpnext_banking.jmhz import mailer
+
+	return {"ok": True, "email": mailer.queue_for_import(doc)}
 
 
 # --- cancelling (SPEC §6.5) ----------------------------------------------------
@@ -670,10 +678,14 @@ class _ImportCache:
 		return self.docs[name]
 
 	def save_all(self, final_status: str) -> None:
+		from erpnext_banking.jmhz import pdf_import
+
 		for imp in self.docs.values():
 			if not any(r.status in (R_VYTVORENA, R_ODESLANA) for r in imp.rows):
 				imp.status = final_status
 				clear_ik_mpsv(imp)
+				if final_status == ZRUSENO:
+					pdf_import.delete_all(imp, save=False)
 			imp.flags.jmhz_internal = True
 			imp.save(ignore_permissions=True)
 			imp.flags.jmhz_internal = False
@@ -729,6 +741,9 @@ def cancel_import(doc) -> dict:
 			r.employee for r in doc.rows if r.employee and r.status in (R_VYTVORENA, R_ODESLANA)
 		}:
 			cancel_person(doc, employee)
+		from erpnext_banking.jmhz import pdf_import
+
+		pdf_import.delete_all(doc, save=False)  # cuts of printed slips go with the import
 		doc.status = ZRUSENO
 		clear_ik_mpsv(doc)
 		doc.flags.jmhz_internal = True
