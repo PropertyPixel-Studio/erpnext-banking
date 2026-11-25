@@ -92,16 +92,34 @@ def slip_texts(anchor_y: float, name: str, values: dict) -> list[tuple[float, fl
 	return texts
 
 
-def _content(texts) -> bytes:
+# the dotted cut line between two slips sits this far above the next anchor
+SEPARATOR_ABOVE_ANCHOR = 32.3
+
+
+def separator_ops(y: float, dashed: bool = True, shift: float = 0.0) -> bytes:
+	"""Horizontal cut line like in the real report: a stroked segment with a dotted dash pattern.
+
+	`shift` draws it through a `cm` translation (the line ends at the same page y).
+	"""
+	dash = b"[0.75 0.75] 0 d " if dashed else b""
+	cm = f"1 0 0 1 0 {shift:.2f} cm ".encode() if shift else b""
+	return (
+		b"q " + cm + dash + f"0 0 0 RG 0.75 w 34.88 {y - shift:.2f} m 554.62 {y - shift:.2f} l S Q".encode()
+	)
+
+
+def _content(texts, graphics=()) -> bytes:
 	# one text object per item, like the real report (pypdf merges items of one BT block on a line)
-	ops = []
+	ops = list(graphics)
 	for x, y, text in texts:
 		ops.append(f"BT /F1 7 Tf 1 0 0 1 {x:.1f} {y:.1f} Tm (".encode() + _encode(text) + b") Tj ET")
 	return b"\n".join(ops)
 
 
-def build_pdf(pages: list[list[tuple[float, float, str]]]) -> bytes:
-	"""Minimal PDF with one Helvetica font and the given texts per page."""
+def build_pdf(
+	pages: list[list[tuple[float, float, str]]], graphics: list[list[bytes]] | None = None
+) -> bytes:
+	"""Minimal PDF with one Helvetica font, the given texts and optional graphics ops per page."""
 	differences = " ".join(f"{code} /{glyph}" for code, glyph in sorted(_EXTRA.values()))
 	objects: list[bytes] = []
 
@@ -115,8 +133,8 @@ def build_pdf(pages: list[list[tuple[float, float, str]]]) -> bytes:
 	)
 	pages_id = len(objects) + 1 + 2 * len(pages)
 	page_ids = []
-	for texts in pages:
-		stream = _content(texts)
+	for page_no, texts in enumerate(pages):
+		stream = _content(texts, (graphics or [])[page_no] if graphics and page_no < len(graphics) else ())
 		content = add(b"<< /Length %d >>\nstream\n" % len(stream) + stream + b"\nendstream")
 		page_ids.append(
 			add(
@@ -163,13 +181,27 @@ def slip_values(gross=15353, sp=1091, zp=691, tax=0, hours=40.5, days=5, vacatio
 	}
 
 
-def report_pdf(slips: list[tuple[str, dict]], per_page: int = 2) -> bytes:
-	"""Slips as (name, values); `per_page` slips stacked from the top of each A4 page."""
-	pages = []
-	step = 842 / per_page
+def anchor_y(index: int, per_page: int = 2) -> float:
+	return 798.7 - index * (842 / per_page)
+
+
+def report_pdf(
+	slips: list[tuple[str, dict]], per_page: int = 2, separator: str | None = "dashed", shift: float = 0.0
+) -> bytes:
+	"""Slips as (name, values); `per_page` slips stacked from the top of each A4 page.
+
+	`separator`: "dashed" (dotted cut line between slips, like the real report), "solid"
+	(a plain line, which is not a cut line) or None.
+	"""
+	pages, graphics = [], []
 	for start in range(0, len(slips), per_page):
-		texts = []
-		for i, (name, values) in enumerate(slips[start : start + per_page]):
-			texts += slip_texts(798.7 - i * step, name, values)
+		texts, ops = [], []
+		chunk = slips[start : start + per_page]
+		for i, (name, values) in enumerate(chunk):
+			texts += slip_texts(anchor_y(i, per_page), name, values)
+			if i and separator:
+				y = anchor_y(i, per_page) + SEPARATOR_ABOVE_ANCHOR
+				ops.append(separator_ops(y, dashed=separator == "dashed", shift=shift))
 		pages.append(texts)
-	return build_pdf(pages)
+		graphics.append(ops)
+	return build_pdf(pages, graphics)
