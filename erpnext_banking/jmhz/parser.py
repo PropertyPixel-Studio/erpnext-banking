@@ -153,6 +153,14 @@ def _build_person(ik: str, forms: list[_Form], schema: str, typ_podani: str, lab
 		)
 	if typ_podani == "R" and any(f.typ_formulare != "R" for f in forms):
 		r.add("P12", "block", "Formulář osoby v řádném podání není řádný (typFormulare ≠ R).")
+	if typ_podani == "O" and any(f.typ_formulare == "S" for f in forms):
+		# cancelling a single employment inside a corrective report: the slip cannot be rebuilt
+		# from the remaining data, HR resolves it manually
+		r.add(
+			"P13",
+			"block",
+			"Opravné podání stornuje pracovněprávní vztah osoby (typFormulare S); řešte ručně.",
+		)
 
 	supported = [f.body for f in forms if f.kind == C.SUPPORTED_FORM]
 	amounts: dict[str, int] = {}
