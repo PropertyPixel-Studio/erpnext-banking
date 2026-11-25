@@ -36,6 +36,9 @@ doc_events = {
 	"Payroll Entry": {"validate": "erpnext_banking.jmhz.guards.block_payroll_entry"},
 }
 
+# JMHZ module: button "Poslat pásku e-mailem" on the salary slip
+doctype_js = {"Salary Slip": "public/js/jmhz_salary_slip.js"}
+
 # JMHZ module: users without an HR role do not see draft and cancelled salary slips
 permission_query_conditions = {"Salary Slip": "erpnext_banking.jmhz.guards.salary_slip_query"}
 has_permission = {"Salary Slip": "erpnext_banking.jmhz.guards.salary_slip_has_permission"}
