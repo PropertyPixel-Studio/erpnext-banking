@@ -172,6 +172,12 @@ earlier import only after HR confirms it. A cancelling report (`S`) cancels all 
 period with **Provést storno**. **Zrušit import** cancels the slips and Additional Salaries of one
 import; the same file can then be imported again.
 
+**E-mail.** The built-in HRMS e-mail on submit stays off. `JMHZ Settings.email_mode` decides who
+gets the slip after **Odeslat pásky**: `Vypnuto` (default, nobody), `Jen testovací zaměstnanci`
+or `Všem` (everyone with a preferred e-mail). The same mode applies to the button on the slip and
+to the HRMS list action "Email Salary Slips". Test the e-mail on a test employee with a synthetic
+report before switching to `Všem`.
+
 **Guards** (can be relaxed in JMHZ Settings where noted):
 
 - a JMHZ slip is submitted and cancelled only from its import, never directly or in bulk from the
