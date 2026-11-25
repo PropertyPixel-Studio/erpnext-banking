@@ -139,6 +139,9 @@ ID_PPV = "identifikace.idPpv"  # 10228
 # Employee summary data. Present only on the primary employment of a person.
 SOUHRN_ZEC = "souhrnDataZec"
 ZUCTOVANO = "souhrnDataZec.prijmy.zuctovanoCelkem"  # 10286
+# tax base and computed tax, used only to compare with the printed slip (SPEC §6.6)
+ZAKLAD_DANE = "souhrnDataZec.zalohaNaDan.zakladDane"  # 10297
+VYPOCTENA_ZALOHA = "souhrnDataZec.zalohaNaDan.vypoctenaZaloha"  # 10298
 OSVOBOZENO = "souhrnDataZec.prijmy.osvobozenoCelkem"  # 10289
 CISTY_PRIJEM = "souhrnDataZec.mzdaCista.mzdaCista"  # 10344
 SRAZKY_EVIDOVANY = "souhrnDataZec.mzdaCista.srazkyZeMzdyEvidovany"  # 10116
