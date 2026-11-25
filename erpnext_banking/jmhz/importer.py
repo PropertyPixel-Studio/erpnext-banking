@@ -286,12 +286,15 @@ def validate_pairing(doc) -> None:
 
 
 def refresh_rows(doc) -> None:
-	"""Recompute the status of every row. Only in status Náhled."""
+	"""Recompute the status of every row and its printed slip check. Only in status Náhled."""
+	from erpnext_banking.jmhz import pdf_import
+
 	start, end = getdate(doc.period_start), getdate(doc.period_end)
 	for row in doc.rows:
 		status, extra = row_status(doc, row, start, end)
 		row.status = status
 		row.issues = "\n".join(row_parser_issue_lines(row) + extra)
+		pdf_import.recheck(row)  # the expected pay changes with the manual deduction
 
 
 def row_status(doc, row, start: dt.date, end: dt.date) -> tuple[str, list[str]]:

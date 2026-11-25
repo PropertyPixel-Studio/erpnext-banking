@@ -15,6 +15,7 @@ from decimal import Decimal
 
 import frappe
 from frappe import _
+from frappe.core.doctype.file.utils import get_content_hash
 from frappe.utils import flt
 
 from erpnext_banking.jmhz import components as C
@@ -126,6 +127,23 @@ def match(doc, slips: list[PdfSlip]) -> tuple[dict[str, PdfSlip], list[PdfSlip]]
 
 
 def _save_file(doc, file_name: str, content: bytes) -> str:
+	"""Store one cut as a private File of the import and return its URL.
+
+	The same cut uploaded again reuses its File. Frappe would otherwise create a second File with
+	the same URL (same content hash), and replacing the row's "old" cut would delete both of them
+	together with the file on disk.
+	"""
+	existing = frappe.db.get_value(
+		"File",
+		{
+			"attached_to_doctype": importer.IMPORT,
+			"attached_to_name": doc.name,
+			"content_hash": get_content_hash(content),
+		},
+		"file_url",
+	)
+	if existing:
+		return existing
 	f = frappe.get_doc(
 		{
 			"doctype": "File",
@@ -152,12 +170,57 @@ def _delete_file(doc, file_url: str | None) -> None:
 		frappe.delete_doc("File", name, ignore_permissions=True, force=True)
 
 
-def _set_row_pdf(doc, row, file_url: str, fields: dict[str, Decimal]) -> None:
-	_delete_file(doc, row.slip_pdf)
-	row.slip_pdf = file_url
+def _referenced(doc, file_url: str, except_row=None) -> bool:
+	return any(r.slip_pdf == file_url for r in doc.rows if r is not except_row) or any(
+		p["file_url"] == file_url for p in _unassigned(doc)
+	)
+
+
+def _stored(row) -> dict:
+	"""Printed values of the row's cut ({"fields": ...}) and the JMHZ values a manual
+	confirmation was given for ({"confirmed": ...})."""
+	return json.loads(row.pdf_fields or "{}")
+
+
+def _fingerprint(row) -> str:
+	return json.dumps({k: None if v is None else str(v) for k, v in jmhz_values(row).items()}, sort_keys=True)
+
+
+def _apply_check(row, fields: dict[str, Decimal], keep_confirmation: bool) -> None:
 	wrong = mismatches(row, fields)
-	row.pdf_check = NESHODA if wrong else SHODA
+	if not wrong:
+		row.pdf_check = SHODA
+	else:
+		row.pdf_check = POTVRZENO if keep_confirmation else NESHODA
 	row.pdf_check_detail = ", ".join(wrong) if wrong else None
+
+
+def _set_row_pdf(doc, row, file_url: str, fields: dict[str, Decimal]) -> None:
+	old = row.slip_pdf
+	row.slip_pdf = file_url
+	if old and old != file_url and not _referenced(doc, old, except_row=row):
+		_delete_file(doc, old)
+	row.pdf_fields = json.dumps({"fields": {k: str(v) for k, v in fields.items()}})
+	_apply_check(row, fields, keep_confirmation=False)
+
+
+def recheck(row) -> None:
+	"""Called on every save in Náhled (importer.refresh_rows).
+
+	The expected "K výplatě" changes with the manual deduction, so the check is computed again
+	from the stored printed values. A manual confirmation holds only for the JMHZ values it was
+	given for. A row without a cut is always "Bez PDF".
+	"""
+	if not row.slip_pdf:
+		row.pdf_check = BEZ_PDF
+		row.pdf_check_detail = None
+		return
+	stored = _stored(row)
+	if not stored.get("fields"):
+		return
+	fields = {k: Decimal(v) for k, v in stored["fields"].items()}
+	keep = row.pdf_check == POTVRZENO and stored.get("confirmed") == _fingerprint(row)
+	_apply_check(row, fields, keep_confirmation=keep)
 
 
 def _unassigned(doc) -> list[dict]:
@@ -192,9 +255,15 @@ def upload(doc, content: bytes) -> dict:
 		url = _save_file(doc, f"{doc.name}-{row.pseudonym}.pdf", slip.pdf)
 		_set_row_pdf(doc, row, url, slip.fields)
 
-	pending = _unassigned(doc)
+	# a cut that is now assigned leaves the pending list; the same cut is listed only once
+	row_urls = {r.slip_pdf for r in doc.rows if r.slip_pdf}
+	pending = [p for p in _unassigned(doc) if p["file_url"] not in row_urls]
+	known = row_urls | {p["file_url"] for p in pending}
 	for slip in unassigned:
 		url = _save_file(doc, f"{doc.name}-neprirazeno-{slip.page}-{slip.index}.pdf", slip.pdf)
+		if url in known:
+			continue
+		known.add(url)
 		pending.append(
 			{
 				"file_url": url,
@@ -236,6 +305,9 @@ def confirm_mismatches(doc) -> dict:
 	for row in doc.rows:
 		if row.pdf_check == NESHODA:
 			row.pdf_check = POTVRZENO
+			stored = _stored(row)
+			stored["confirmed"] = _fingerprint(row)
+			row.pdf_fields = json.dumps(stored)
 			confirmed.append(row.pseudonym)
 	if not confirmed:
 		frappe.throw(_("Žádný řádek nemá neshodu s PDF."))
@@ -248,6 +320,7 @@ def delete_all(doc, save: bool = True) -> None:
 	for row in doc.rows:
 		_delete_file(doc, row.slip_pdf)
 		row.slip_pdf = None
+		row.pdf_fields = None
 		row.pdf_check = BEZ_PDF
 		row.pdf_check_detail = None
 	for item in _unassigned(doc):
