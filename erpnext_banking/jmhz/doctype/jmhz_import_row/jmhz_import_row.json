@@ -20,6 +20,8 @@
   "zuctovano",
   "cisty_prijem",
   "danovy_bonus",
+  "zdanitelna_mzda",
+  "vypoctena_dan",
   "column_break_amounts",
   "rucni_srazka",
   "rucni_srazka_poznamka",
@@ -32,7 +34,7 @@
   "hodiny_dovolena",
   "neodpracovane_hodiny",
   "section_pdf",
-  "premier_pdf",
+  "slip_pdf",
   "pdf_check",
   "pdf_check_detail",
   "column_break_pdf",
@@ -149,6 +151,18 @@
    "read_only": 1
   },
   {
+   "fieldname": "zdanitelna_mzda",
+   "fieldtype": "Currency",
+   "label": "Zdanitelná mzda (10297)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "vypoctena_dan",
+   "fieldtype": "Currency",
+   "label": "Vypočtená daň (10298)",
+   "read_only": 1
+  },
+  {
    "fieldname": "column_break_amounts",
    "fieldtype": "Column Break"
   },
@@ -214,9 +228,9 @@
    "label": "PDF páska a e-mail"
   },
   {
-   "fieldname": "premier_pdf",
+   "fieldname": "slip_pdf",
    "fieldtype": "Attach",
-   "label": "PDF páska (jen pro vedení)",
+   "label": "PDF páska ze mzdového systému (jen pro vedení)",
    "read_only": 1
   },
   {
