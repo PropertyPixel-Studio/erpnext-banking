@@ -70,3 +70,49 @@ def cancel_import(name: str):
 @frappe.whitelist(methods=["POST"])
 def run_storno(name: str):
 	return importer.run_storno(_get_import(name))
+
+
+# --- printed slips from the payroll system (SPEC §6.6) -----------------------------
+
+
+@frappe.whitelist(methods=["POST"])
+def upload_pdf():
+	"""Called by `upload_file` with `method` and `doctype`/`docname` of the import.
+
+	The summary PDF stays in memory and is never stored; only the per-person cuts are.
+	"""
+	from erpnext_banking.jmhz import pdf_import
+	from erpnext_banking.jmhz.pdf_slips import MAX_PDF_BYTES
+
+	doc = _get_import(frappe.form_dict.docname)
+	content = frappe.local.uploaded_file
+	file_name = frappe.local.uploaded_filename or ""
+	if content is None:
+		frappe.throw(_("Soubor se nenahrál."))
+	if not file_name.lower().endswith(".pdf"):
+		frappe.throw(_("Nahrajte sestavu výplatních pásek ve formátu PDF."))
+	if len(content) > MAX_PDF_BYTES:
+		frappe.throw(_("Soubor je větší než 10 MB."))
+	return pdf_import.upload(doc, content)
+
+
+@frappe.whitelist(methods=["POST"])
+def assign_pdf(name: str, file_url: str, row: str):
+	from erpnext_banking.jmhz import pdf_import
+
+	return pdf_import.assign(_get_import(name), file_url, row)
+
+
+@frappe.whitelist(methods=["POST"])
+def confirm_pdf(name: str):
+	from erpnext_banking.jmhz import pdf_import
+
+	return pdf_import.confirm_mismatches(_get_import(name))
+
+
+@frappe.whitelist(methods=["POST"])
+def delete_pdfs(name: str):
+	from erpnext_banking.jmhz import pdf_import
+
+	pdf_import.delete_all(_get_import(name))
+	return {"ok": True}
