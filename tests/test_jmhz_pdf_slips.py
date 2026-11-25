@@ -17,9 +17,9 @@ from erpnext_banking.jmhz.tests.synthetic_pdf import (
 	slip_values,
 )
 
-A = ("Nováková Žofie", slip_values(gross=15353, sp=1091, zp=691, hours=40.5, days=5))
+A = ("Zkušební Žofie", slip_values(gross=15353, sp=1091, zp=691, hours=40.5, days=5))
 B = (
-	"Dvořák Čeněk",
+	"Vymyšlený Čeněk",
 	slip_values(gross=23456, sp=1665, zp=1056, tax=1234, hours=98.25, days=12, vacation=2000),
 )
 C = ("Řehoř Ďáblík", slip_values(gross=4000, sp=0, zp=0, hours=16, days=2, bonus=500))
@@ -102,7 +102,7 @@ def test_chybejici_pole():
 	message = str(e.value)
 	assert "ČISTÁ MZDA" in message
 	# no names or amounts in messages
-	assert "Nováková" not in message and "13" not in message.replace("Strana 1", "")
+	assert "Zkušební" not in message and "13" not in message.replace("Strana 1", "")
 
 
 @pytest.mark.parametrize("content", [b"", b"%PDF-1.4 broken", b"not a pdf at all"])

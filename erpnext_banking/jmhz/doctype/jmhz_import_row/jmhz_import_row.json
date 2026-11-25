@@ -39,7 +39,8 @@
   "pdf_check_detail",
   "column_break_pdf",
   "email_status",
-  "lines_json"
+  "lines_json",
+  "pdf_fields"
  ],
  "fields": [
   {
@@ -238,7 +239,8 @@
    "fieldname": "pdf_check",
    "fieldtype": "Select",
    "label": "Kontrola PDF",
-   "options": "Bez PDF\nShoda\nNeshoda\nPotvrzeno ručně"
+   "options": "Bez PDF\nShoda\nNeshoda\nPotvrzeno ručně",
+   "read_only": 1
   },
   {
    "fieldname": "pdf_check_detail",
@@ -264,11 +266,18 @@
    "hidden": 1,
    "label": "Řádky pásky",
    "read_only": 1
+  },
+  {
+   "fieldname": "pdf_fields",
+   "fieldtype": "JSON",
+   "hidden": 1,
+   "label": "Hodnoty z PDF pásky",
+   "read_only": 1
   }
  ],
  "istable": 1,
  "links": [],
- "modified": "2026-11-25 12:00:00",
+ "modified": "2026-11-25 22:00:00",
  "modified_by": "Administrator",
  "module": "JMHZ",
  "name": "JMHZ Import Row",

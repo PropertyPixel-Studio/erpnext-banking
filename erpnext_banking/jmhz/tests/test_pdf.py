@@ -154,6 +154,80 @@ class TestPdf(JmhzTestCase):
 		self.assertEqual(doc.rows[0].pdf_check, pdf_import.NESHODA)
 		self.assertEqual(doc.rows[0].pdf_check_detail, "K výplatě")
 
+	def test_rucni_srazka_po_nahrani_pdf(self):
+		"""The opposite order: PDF first (Shoda), then a manual deduction -> Neshoda, blocks submit."""
+		doc = self.import_file(jmhz_form("5000000005", "9100000005"), pair={"5000000005": self.a})
+		self.upload(doc, report_pdf([(self.reversed_name(self.name_a), slip_values())]))
+		doc.reload()
+		self.assertEqual(doc.rows[0].pdf_check, pdf_import.SHODA)
+
+		doc.rows[0].rucni_srazka = 500
+		doc.rows[0].rucni_srazka_poznamka = "omyl"
+		doc.save(ignore_permissions=True)
+		self.assertEqual(doc.rows[0].pdf_check, pdf_import.NESHODA)
+		self.assertEqual(doc.rows[0].pdf_check_detail, "K výplatě")
+		self.assertTrue(self.create(doc)["ok"])
+		with self.assertRaises(frappe.ValidationError):
+			importer.submit_slips(frappe.get_doc(importer.IMPORT, doc.name))
+
+	def test_potvrzeni_plati_jen_pro_potvrzene_hodnoty(self):
+		doc = self.import_file(jmhz_form("5000000006", "9100000006"), pair={"5000000006": self.a})
+		self.upload(doc, report_pdf([(self.reversed_name(self.name_a), slip_values(hours=41))]))
+		api.confirm_pdf(doc.name)
+		doc.reload()
+		self.assertEqual(doc.rows[0].pdf_check, pdf_import.POTVRZENO)
+		doc.save(ignore_permissions=True)  # saving again keeps the confirmation
+		self.assertEqual(doc.rows[0].pdf_check, pdf_import.POTVRZENO)
+
+		doc.rows[0].rucni_srazka = 200
+		doc.rows[0].rucni_srazka_poznamka = "test"
+		doc.save(ignore_permissions=True)
+		self.assertEqual(doc.rows[0].pdf_check, pdf_import.NESHODA)
+		self.assertEqual(doc.rows[0].pdf_check_detail, "K výplatě, Hodiny - odpr.")
+
+	def test_kontrolu_pdf_nejde_prepnout_rucne(self):
+		doc = self.import_file(jmhz_form("5000000007", "9100000007"), pair={"5000000007": self.a})
+		self.upload(doc, report_pdf([(self.reversed_name(self.name_a), slip_values(hours=41))]))
+		doc.reload()
+		doc.rows[0].pdf_check = pdf_import.SHODA  # e.g. edited in the grid
+		doc.save(ignore_permissions=True)
+		self.assertEqual(doc.rows[0].pdf_check, pdf_import.NESHODA)
+
+	def test_stejne_pdf_dvakrat(self):
+		"""Uploading the same report again keeps the cut (same content -> same File URL)."""
+		doc = self.two_person_import()
+		pdf = report_pdf(
+			[
+				(self.reversed_name(self.name_a), slip_values()),
+				(self.reversed_name(self.name_b), slip_values(gross=20000, sp=1420, zp=900)),
+				("Nikdo Neznámý", slip_values(gross=1)),
+			]
+		)
+		self.upload(doc, pdf)
+		doc.reload()
+		urls = [r.slip_pdf for r in doc.rows]
+		files = len(self.pdf_files(doc))
+		self.upload(doc, pdf)
+		doc.reload()
+		self.assertEqual([r.slip_pdf for r in doc.rows], urls)
+		self.assertEqual([r.pdf_check for r in doc.rows], [pdf_import.SHODA, pdf_import.SHODA])
+		for url in urls:
+			self.assertTrue(frappe.db.exists("File", {"file_url": url, "attached_to_name": doc.name}))
+		self.assertEqual(len(self.pdf_files(doc)), files)
+		self.assertEqual(len(pdf_import._unassigned(doc)), 1)  # listed once, not twice
+
+	def test_rucni_prirazeni_stejneho_vyrezu_znovu(self):
+		doc = self.two_person_import(same_amounts=True)
+		pdf = report_pdf([("Neznámý Člověk", slip_values())])
+		self.upload(doc, pdf)
+		doc.reload()
+		(pending,) = pdf_import._unassigned(doc)
+		api.assign_pdf(doc.name, pending["file_url"], doc.rows[1].name)
+		self.upload(doc, pdf)  # the same cut again, still ambiguous
+		doc.reload()
+		self.assertFalse(doc.pdf_unassigned)  # already assigned to a row, not listed again
+		self.assertTrue(frappe.db.exists("File", {"file_url": doc.rows[1].slip_pdf}))
+
 	def test_paska_preskocene_osoby(self):
 		doc = self.import_file(jmhz_form("5000000004", "9100000004"))
 		doc.rows[0].skip = 1
