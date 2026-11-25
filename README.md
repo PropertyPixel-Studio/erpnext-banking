@@ -156,6 +156,25 @@ numbers. The banking part does not depend on it.
 All JMHZ doctypes (`JMHZ Import`, `JMHZ Person`, `JMHZ Settings`) are for **HR Manager** only.
 System Manager gets no access.
 
+**Monthly flow** (workspace **JMHZ**, HR Manager):
+
+1. **Nahrát JMHZ XML** on the JMHZ Import list. The file is parsed in memory and never stored as
+   a File; only its hash, name and the parsed numbers are kept.
+2. **Preview:** one row per person. Pick the Employee for unpaired rows, or skip a row with a
+   reason. The pairing is remembered in `JMHZ Person`.
+3. **Vytvořit pásky:** Additional Salaries and draft Salary Slips, in one transaction. Every slip
+   is compared with the report line by line; any difference rolls everything back.
+4. **Odeslat pásky:** submits the slips. Employees then see them in the desk and in `/hrms`.
+
+**Guards** (can be relaxed in JMHZ Settings where noted):
+
+- a JMHZ slip is submitted and cancelled only from its import, never directly or in bulk from the
+  Salary Slip list;
+- a manually created Salary Slip cannot be submitted and a Payroll Entry cannot be saved, unless
+  JMHZ Settings allow it;
+- users without HR Manager / HR User see only submitted slips;
+- deleting a JMHZ document leaves no IK MPSV and no amounts in Deleted Document.
+
 ## Security
 
 - The Fio token is a **read-only** token (Fio supports issuing tokens limited to transaction
