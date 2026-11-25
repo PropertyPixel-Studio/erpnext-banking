@@ -67,6 +67,16 @@ def test_bez_teckovane_cary(separator):
 	assert top.fields == {k: Decimal(str(v)) for k, v in A[1].items()}
 
 
+@pytest.mark.parametrize("dx", [-10.6, 8.0])
+def test_posunute_rozlozeni(dx):
+	# reports from different months are shifted by several points
+	pdf = build_pdf([slip_texts(809.9, *A, dx=dx) + slip_texts(410.2, *B, dx=dx)])
+	top, low = split(pdf)
+	assert (top.name, low.name) == (A[0], B[0])
+	assert top.fields == {k: Decimal(str(v)) for k, v in A[1].items()}
+	assert low.fields == {k: Decimal(str(v)) for k, v in B[1].items()}
+
+
 def test_tri_pasky_na_dvou_stranach():
 	slips = split(report_pdf([A, B, C]))
 	assert [(s.page, s.index) for s in slips] == [(1, 1), (1, 2), (2, 1)]
