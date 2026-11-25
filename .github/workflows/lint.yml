@@ -3,8 +3,8 @@ name: Lint
 on:
   push:
     branches: [main]
+  # every PR, also stacked PRs whose base is not main
   pull_request:
-    branches: [main]
 
 jobs:
   lint:

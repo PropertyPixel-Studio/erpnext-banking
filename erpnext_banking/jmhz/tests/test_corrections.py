@@ -188,7 +188,12 @@ class TestCorrections(JmhzTestCase):
 		importer.cancel_import(frappe.get_doc(importer.IMPORT, doc.name))
 		doc.reload()
 		self.assertFalse(frappe.db.exists("Salary Slip", slip))  # drafts are deleted
+		# permanently: Deleted Document is readable by System Manager
+		self.assertFalse(
+			frappe.db.exists("Deleted Document", {"deleted_doctype": "Salary Slip", "deleted_name": slip})
+		)
 		self.assertFalse(doc.rows[0].salary_slip)
+		self.assertFalse(doc.rows[0].ik_mpsv)
 		self.assertEqual(doc.status, importer.ZRUSENO)
 		self.assertEqual(self.live_additional_salaries(doc.name), 0)
 
@@ -197,5 +202,39 @@ class TestCorrections(JmhzTestCase):
 		importer.cancel_import(frappe.get_doc(importer.IMPORT, doc.name))
 		doc.reload()
 		self.assertEqual(doc.status, importer.ZRUSENO)
+		self.assertFalse(doc.rows[0].ik_mpsv)  # a cancelled import keeps no IK MPSV
 		with self.assertRaises(frappe.ValidationError):
 			importer.cancel_import(frappe.get_doc(importer.IMPORT, doc.name))
+
+	def test_storno_smaze_ik_mpsv_i_u_preskoceneho(self):
+		a = self.employee()
+		original = self.import_file(
+			hpp(ik="3000000015"), hpp(ik="3000000016", ppv="9000000016"), pair={"3000000015": a}
+		)
+		original.rows[1].skip = 1
+		original.rows[1].skip_reason = "mimo test"
+		original.save(ignore_permissions=True)
+		self.create(original)
+		importer.submit_slips(frappe.get_doc(importer.IMPORT, original.name))
+		original.reload()
+		self.assertTrue(original.rows[1].ik_mpsv)  # a skipped row keeps it while the import lives
+
+		storno = importer.create_import(report(typ_podani="S", rok=ROK, mesic=MESIC), file_name="s.xml")
+		importer.run_storno(frappe.get_doc(importer.IMPORT, storno.name))
+		original.reload()
+		self.assertEqual(original.status, importer.ZRUSENO)
+		self.assertEqual([r.ik_mpsv for r in original.rows], [None, None])
+
+	def test_radne_podani_po_stornu(self):
+		"""After a cancelling report there is nothing to replace: a new report is a regular one."""
+		a = self.employee()
+		self.done_import(hpp(ik="3000000017"), pair={"3000000017": a})
+		storno = importer.create_import(report(typ_podani="S", rok=ROK, mesic=MESIC), file_name="s.xml")
+		importer.run_storno(frappe.get_doc(importer.IMPORT, storno.name))
+
+		new = self.import_file(hpp(ik="3000000017", ppv="9000000017", cisty=13571, zuct=15353))
+		self.assertFalse(new.replaces)
+		self.assertNotIn("nahradí", new.issues or "")
+		self.assertEqual(new.rows[0].status, importer.R_PRIPRAVENO)
+		self.assertTrue(importer.can_create_slips(new))
+		self.assertTrue(self.create(new)["ok"])
