@@ -31,4 +31,11 @@ doc_events = {
 	"Sales Invoice": {"on_submit": "erpnext_banking.reconcile.on_invoice_submit"},
 	"Purchase Invoice": {"on_submit": "erpnext_banking.reconcile.on_invoice_submit"},
 	"Payment Request": {"on_submit": "erpnext_banking.reconcile.on_payment_request_submit"},
+	# JMHZ module (SPEC §7)
+	"Salary Slip": {"before_submit": "erpnext_banking.jmhz.guards.salary_slip_before_submit"},
+	"Payroll Entry": {"validate": "erpnext_banking.jmhz.guards.block_payroll_entry"},
 }
+
+# JMHZ module: users without an HR role do not see draft and cancelled salary slips
+permission_query_conditions = {"Salary Slip": "erpnext_banking.jmhz.guards.salary_slip_query"}
+has_permission = {"Salary Slip": "erpnext_banking.jmhz.guards.salary_slip_has_permission"}
