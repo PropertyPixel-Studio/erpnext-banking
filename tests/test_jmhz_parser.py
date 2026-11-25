@@ -350,6 +350,13 @@ def test_typ_formulare_v_opravnem_podani():
 	assert "P12" not in codes(r.persons[0])
 
 
+def test_storno_formulare_v_opravnem_podani():
+	(p,) = parse(report(hpp(typ="S"), typ_podani="O")).persons
+	assert "P13" in codes(p)
+	(p,) = parse(report(hpp(typ="R"), typ_podani="O")).persons  # newly added employment
+	assert codes(p) == set()
+
+
 def test_rocni_zuctovani_vysvetleni():
 	# 10344 includes the refund 700 from the annual tax settlement
 	(p,) = parse(report(hpp(cisty=14271, preplatek=700))).persons
@@ -433,7 +440,7 @@ def test_slozky():
 	assert all(c.component_type in ("Earning", "Deduction") for c in C.COMPONENTS)
 
 
-@pytest.mark.parametrize("module", ["parser", "model", "components"])
+@pytest.mark.parametrize("module", ["parser", "model", "components", "pdf_slips"])
 def test_bez_importu_frappe(module):
 	path = pathlib.Path(__file__).parents[1] / "erpnext_banking" / "jmhz" / f"{module}.py"
 	tree = ast.parse(path.read_text(encoding="utf-8"))

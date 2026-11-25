@@ -44,10 +44,22 @@ class JmhzTestCase(IntegrationTestCase):
 		values.update(kw)
 		return frappe.get_doc(values).insert(ignore_permissions=True).name
 
-	def import_file(self, *forms, ver="1.4", pair=None, **kw):
+	def fiscal_year(self, rok: int):
+		"""HRMS refuses slips outside an active fiscal year of the company."""
+		if not frappe.db.exists("Fiscal Year", str(rok)):
+			frappe.get_doc(
+				{
+					"doctype": "Fiscal Year",
+					"year": str(rok),
+					"year_start_date": f"{rok}-01-01",
+					"year_end_date": f"{rok}-12-31",
+				}
+			).insert(ignore_permissions=True)
+
+	def import_file(self, *forms, ver="1.4", pair=None, rok=ROK, mesic=MESIC, **kw):
 		"""Create an import; `pair` = {ik: employee}."""
 		doc = importer.create_import(
-			report(*forms, ver=ver, rok=ROK, mesic=MESIC, **kw), file_name="test.xml"
+			report(*forms, ver=ver, rok=rok, mesic=mesic, **kw), file_name="test.xml"
 		)
 		if pair:
 			ik_to_pseudonym = {ik: pseudonym(ik) for ik in pair}
@@ -94,7 +106,7 @@ class TestRegularImport(JmhzTestCase):
 		self.assertEqual(frappe.db.get_value(importer.PERSON, emp, "ik_mpsv"), "1000000001")
 		self.assertFalse(slip.payroll_entry)
 
-		self.assertEqual(importer.submit_slips(frappe.get_doc(importer.IMPORT, doc.name)), {"ok": True})
+		self.assertTrue(importer.submit_slips(frappe.get_doc(importer.IMPORT, doc.name))["ok"])
 		doc.reload()
 		self.assertEqual(doc.status, importer.DOKONCENO)
 		self.assertEqual(doc.rows[0].status, importer.R_ODESLANA)
@@ -116,12 +128,13 @@ class TestRegularImport(JmhzTestCase):
 
 	def test_srazkova_dan_obe_verze(self):
 		lines = []
-		for ver, ik in (("1.4", "1000000003"), ("1.5", "1000000004")):
+		self.fiscal_year(2027)
+		for ver, ik, rok in (("1.4", "1000000003", 2026), ("1.5", "1000000004", 2027)):
 			emp = self.employee()
 			f = form(ver, ik=ik, zuct=10000, mzda=10000, srd=1500, cisty=8500)
-			doc = self.import_file(f, ver=ver, pair={ik: emp})
+			doc = self.import_file(f, ver=ver, pair={ik: emp}, rok=rok)
 			self.assertEqual(doc.schema_version, ver)
-			self.create(doc)
+			self.assertEqual(self.create(doc), {"ok": True, "created": 1})
 			slip = self.slip(doc)
 			self.assertEqual(slip.net_pay, 8500)
 			lines.append(self.slip_lines(slip))
@@ -341,12 +354,24 @@ class TestRegularImport(JmhzTestCase):
 			self.assertIn(code, row.issues)
 
 	def test_existujici_paska_za_obdobi(self):
+		# a slip created outside JMHZ blocks the person (I07); JMHZ slips are replaced instead (M4)
 		emp = self.employee()
-		first = self.import_file(hpp(ik="1000000017"), pair={"1000000017": emp})
-		self.create(first)
-		second = self.import_file(hpp(ik="1000000017", ppv="9000000009"), pair={"1000000017": emp})
-		self.assertEqual(second.rows[0].status, importer.R_BLOKOVANO)
-		self.assertIn("I07", second.rows[0].issues)
+		importer.ensure_structure_assignment(emp, self.company, "2025-01-01", START, "CZK")
+		manual = frappe.get_doc(
+			{
+				"doctype": "Salary Slip",
+				"employee": emp,
+				"company": self.company,
+				"start_date": START,
+				"end_date": END,
+				"posting_date": END,
+				"payroll_frequency": "Monthly",
+			}
+		).insert(ignore_permissions=True)
+		self.assertFalse(manual.jmhz_import)
+		doc = self.import_file(hpp(ik="1000000017"), pair={"1000000017": emp})
+		self.assertEqual(doc.rows[0].status, importer.R_BLOKOVANO)
+		self.assertIn("I07", doc.rows[0].issues)
 
 	def test_parovani(self):
 		emp = self.employee()
@@ -389,10 +414,6 @@ class TestRegularImport(JmhzTestCase):
 			fresh.save(ignore_permissions=True)
 		with self.assertRaises(frappe.ValidationError):
 			frappe.delete_doc(importer.IMPORT, doc.name, ignore_permissions=True)
-
-	def test_opravne_podani_zatim_odmitnuto(self):
-		with self.assertRaises(frappe.ValidationError):
-			importer.create_import(report(hpp(typ="O"), typ_podani="O"), file_name="o.xml")
 
 	def test_fatalni_chyba_nevytvori_import(self):
 		before = frappe.db.count(importer.IMPORT)
