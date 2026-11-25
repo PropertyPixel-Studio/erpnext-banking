@@ -416,7 +416,12 @@ def create_slips(doc) -> dict:
 	except Exception as e:
 		frappe.db.rollback(save_point=savepoint)
 		message = getattr(e, "jmhz_message", None) or _error_text(current, e)
-		frappe.log_error(title="JMHZ: vytvoření pásek")
+		if not _expected_error(e):
+			# expected validation errors are shown to the user, they would only clutter the Error Log
+			frappe.log_error(
+				title="JMHZ: vytvoření pásek",
+				message=type(e).__name__ if _may_quote_values(e) else None,
+			)
 		# the HRMS dialogs of the failed attempt would only confuse, the result carries the message
 		frappe.local.message_log = []
 		frappe.db.set_value(
@@ -426,10 +431,25 @@ def create_slips(doc) -> dict:
 	return {"ok": True, "created": created}
 
 
+def _may_quote_values(e: Exception) -> bool:
+	"""Unique key errors quote the duplicate value (e.g. IK MPSV) in their text."""
+	return isinstance(e, frappe.UniqueValidationError | frappe.DuplicateEntryError) or bool(
+		frappe.db.is_duplicate_entry(e) or frappe.db.is_unique_key_violation(e)
+	)
+
+
+def _expected_error(e: Exception) -> bool:
+	return isinstance(e, frappe.ValidationError) and not _may_quote_values(e)
+
+
 def _error_text(pseudonym: str | None, e: Exception) -> str:
 	from frappe.utils import strip_html
 
-	detail = strip_html(str(e)).strip() or type(e).__name__
+	if _expected_error(e):
+		detail = strip_html(str(e)).strip() or type(e).__name__
+	else:
+		# the text of a foreign exception is not passed on, it can contain stored values
+		detail = f"neočekávaná chyba {type(e).__name__}, podrobnosti jsou v Error Logu"
 	return f"{pseudonym or '-'}: {detail}. Nic se neuložilo."
 
 
