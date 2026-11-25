@@ -53,6 +53,8 @@ class Person:
 	exekuce: bool  # 10116
 	has_income: bool
 	issues: list[Issue] = field(default_factory=list)
+	zdanitelna_mzda: int = 0  # 10297
+	vypoctena_dan: int = 0  # 10298
 
 	@property
 	def blocking_issues(self) -> list[Issue]:
