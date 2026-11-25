@@ -156,7 +156,14 @@ def link_previous_import(doc, parsed: ParsedFile) -> None:
 
 
 def live_imports(company: str, rok: int, mesic: int, exclude: str | None = None) -> list:
-	filters = {"company": company, "rok": rok, "mesic": mesic, "status": ["in", LIVE_STATUSES]}
+	# a completed cancelling report has no slips, there is nothing in it to replace
+	filters = {
+		"company": company,
+		"rok": rok,
+		"mesic": mesic,
+		"status": ["in", LIVE_STATUSES],
+		"typ_podani": ["!=", "S"],
+	}
 	if exclude:
 		filters["name"] = ["!=", exclude]
 	return frappe.get_all(IMPORT, filters=filters, fields=["name", "file_sha256"], order_by="creation desc")
@@ -418,7 +425,12 @@ def create_slips(doc) -> dict:
 	except Exception as e:
 		frappe.db.rollback(save_point=savepoint)
 		message = getattr(e, "jmhz_message", None) or _error_text(current, e)
-		frappe.log_error(title="JMHZ: vytvoření pásek")
+		if not _expected_error(e):
+			# expected validation errors are shown to the user, they would only clutter the Error Log
+			frappe.log_error(
+				title="JMHZ: vytvoření pásek",
+				message=type(e).__name__ if _may_quote_values(e) else None,
+			)
 		# the HRMS dialogs of the failed attempt would only confuse, the result carries the message
 		frappe.local.message_log = []
 		frappe.db.set_value(
@@ -428,10 +440,25 @@ def create_slips(doc) -> dict:
 	return {"ok": True, "created": created}
 
 
+def _may_quote_values(e: Exception) -> bool:
+	"""Unique key errors quote the duplicate value (e.g. IK MPSV) in their text."""
+	return isinstance(e, frappe.UniqueValidationError | frappe.DuplicateEntryError) or bool(
+		frappe.db.is_duplicate_entry(e) or frappe.db.is_unique_key_violation(e)
+	)
+
+
+def _expected_error(e: Exception) -> bool:
+	return isinstance(e, frappe.ValidationError) and not _may_quote_values(e)
+
+
 def _error_text(pseudonym: str | None, e: Exception) -> str:
 	from frappe.utils import strip_html
 
-	detail = strip_html(str(e)).strip() or type(e).__name__
+	if _expected_error(e):
+		detail = strip_html(str(e)).strip() or type(e).__name__
+	else:
+		# the text of a foreign exception is not passed on, it can contain stored values
+		detail = f"neočekávaná chyba {type(e).__name__}, podrobnosti jsou v Error Logu"
 	return f"{pseudonym or '-'}: {detail}. Nic se neuložilo."
 
 
@@ -653,11 +680,18 @@ class _ImportCache:
 		for imp in self.docs.values():
 			if not any(r.status in (R_VYTVORENA, R_ODESLANA) for r in imp.rows):
 				imp.status = final_status
+				clear_ik_mpsv(imp)
 				if final_status == ZRUSENO:
 					pdf_import.delete_all(imp, save=False)
 			imp.flags.jmhz_internal = True
 			imp.save(ignore_permissions=True)
 			imp.flags.jmhz_internal = False
+
+
+def clear_ik_mpsv(imp) -> None:
+	"""A cancelled or replaced import is never processed again: IK MPSV stays only in JMHZ Person."""
+	for row in imp.rows:
+		row.ik_mpsv = None
 
 
 def cancel_person(imp, employee: str) -> None:
@@ -671,9 +705,14 @@ def cancel_person(imp, employee: str) -> None:
 		fields=["name", "docstatus"],
 	):
 		if slip.docstatus == 1:
-			frappe.get_doc("Salary Slip", slip.name).cancel()
+			submitted = frappe.get_doc("Salary Slip", slip.name)
+			submitted.flags.jmhz_internal = True  # guards.salary_slip_before_cancel
+			submitted.cancel()
 		else:
-			frappe.delete_doc("Salary Slip", slip.name, ignore_permissions=True, force=True)
+			# permanently: Deleted Document would keep the amounts readable for System Manager
+			frappe.delete_doc(
+				"Salary Slip", slip.name, ignore_permissions=True, force=True, delete_permanently=True
+			)
 			for row in imp.rows:
 				if row.salary_slip == slip.name:
 					row.salary_slip = None
@@ -703,6 +742,7 @@ def cancel_import(doc) -> dict:
 
 		pdf_import.delete_all(doc, save=False)  # cuts of printed slips go with the import
 		doc.status = ZRUSENO
+		clear_ik_mpsv(doc)
 		doc.flags.jmhz_internal = True
 		doc.save(ignore_permissions=True)
 		doc.flags.jmhz_internal = False

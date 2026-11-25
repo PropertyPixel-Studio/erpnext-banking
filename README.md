@@ -7,7 +7,12 @@ via the `variable_symbol` (VS) custom field.
 First provider: **Fio Banka** (Czech Republic). Architecture is provider-pluggable — adding a
 second bank is drop-in (see `providers/` directory).
 
-**Versions:** Frappe 16.20+, ERPNext 16.21+.
+**Versions:** Frappe 16.20+, ERPNext 16.21+. The JMHZ module needs Frappe 16.60+, ERPNext 16.60+
+and **HRMS 16.60+**.
+
+> **Requires HRMS.** Since the JMHZ module was added, `required_apps = ["erpnext", "hrms"]`: the
+> app can no longer be installed on a site without Frappe HR (its doctypes link to Salary Slip and
+> Additional Salary).
 
 ## Install
 
@@ -128,6 +133,59 @@ two fallback layers before giving up:
 Both layers are gated by the same `Auto-Reconcile Incoming` flag as the exact-VS match — there's
 no separate on/off switch. Exact-VS matching itself is unchanged: when the VS does resolve to a
 Sales Invoice or Payment Request, these fallbacks never run.
+
+## JMHZ module (salary slips from monthly employer reports)
+
+A separate Frappe module **JMHZ** in this app imports the Czech monthly employer report
+(*jednotné měsíční hlášení zaměstnavatele*, XML schema 1.4 and 1.5) into HRMS Salary Slips. HRMS
+computes nothing: every amount comes from the report and the slip only adds it up to the same
+numbers. The banking part does not depend on it.
+
+**Setup.** Nothing has to be created by hand. The patch `jmhz_initial_setup` and every `migrate`
+(`after_migrate`) run an idempotent setup that:
+
+- creates the JMHZ salary components and enforces their flags (`depends_on_payment_days = 0`,
+  `is_tax_applicable = 0`, no formula);
+- creates and submits the salary structure `Import z JMHZ` with all components at amount 0;
+- sets Payroll Settings: `disable_rounded_total = 1` and the built-in salary slip e-mail **off**
+  (it is switched off again on every migrate);
+- creates `JMHZ Settings` (company from Global Defaults);
+- assigns a technical holiday list without holidays to the company, but only if the company has
+  none (HRMS needs one to create any slip).
+
+All JMHZ doctypes (`JMHZ Import`, `JMHZ Person`, `JMHZ Settings`) are for **HR Manager** only.
+System Manager gets no access.
+
+**Monthly flow** (workspace **JMHZ**, HR Manager):
+
+1. **Nahrát JMHZ XML** on the JMHZ Import list. The file is parsed in memory and never stored as
+   a File; only its hash, name and the parsed numbers are kept.
+2. **Preview:** one row per person. Pick the Employee for unpaired rows, or skip a row with a
+   reason. The pairing is remembered in `JMHZ Person`.
+3. **Vytvořit pásky:** Additional Salaries and draft Salary Slips, in one transaction. Every slip
+   is compared with the report line by line; any difference rolls everything back.
+4. **Odeslat pásky:** submits the slips. Employees then see them in the desk and in `/hrms`.
+
+**Corrections.** A corrective report (`O`) replaces the slips of the persons it contains, the
+others stay unchanged. A regular report from a different file for the same period replaces the
+earlier import only after HR confirms it. A cancelling report (`S`) cancels all JMHZ slips of the
+period with **Provést storno**. **Zrušit import** cancels the slips and Additional Salaries of one
+import; the same file can then be imported again.
+
+**E-mail.** The built-in HRMS e-mail on submit stays off. `JMHZ Settings.email_mode` decides who
+gets the slip after **Odeslat pásky**: `Vypnuto` (default, nobody), `Jen testovací zaměstnanci`
+or `Všem` (everyone with a preferred e-mail). The same mode applies to the button on the slip and
+to the HRMS list action "Email Salary Slips". Test the e-mail on a test employee with a synthetic
+report before switching to `Všem`.
+
+**Guards** (can be relaxed in JMHZ Settings where noted):
+
+- a JMHZ slip is submitted and cancelled only from its import, never directly or in bulk from the
+  Salary Slip list;
+- a manually created Salary Slip cannot be submitted and a Payroll Entry cannot be saved, unless
+  JMHZ Settings allow it;
+- users without HR Manager / HR User see only submitted slips;
+- deleting a JMHZ document leaves no IK MPSV and no amounts in Deleted Document.
 
 ## Security
 
