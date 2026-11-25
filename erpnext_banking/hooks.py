@@ -44,6 +44,16 @@ doc_events = {
 	"JMHZ Person": {"after_delete": "erpnext_banking.jmhz.guards.scrub_deleted"},
 }
 
+# JMHZ module: button "Poslat pásku e-mailem" on the salary slip
+doctype_js = {"Salary Slip": "public/js/jmhz_salary_slip.js"}
+
+# JMHZ module: the HRMS list action "Email Salary Slips" respects JMHZ Settings.email_mode
+override_whitelisted_methods = {
+	"hrms.payroll.doctype.salary_slip.salary_slip.enqueue_email_salary_slips": (
+		"erpnext_banking.jmhz.mailer.enqueue_email_salary_slips"
+	)
+}
+
 # JMHZ module: users without an HR role do not see draft and cancelled salary slips
 permission_query_conditions = {"Salary Slip": "erpnext_banking.jmhz.guards.salary_slip_query"}
 has_permission = {"Salary Slip": "erpnext_banking.jmhz.guards.salary_slip_has_permission"}
