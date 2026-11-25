@@ -14,10 +14,13 @@ class JMHZImport(Document):
 		self.name = make_autoname(f"JMHZ-{int(self.rok):04d}-{int(self.mesic):02d}-.##", doc=self)
 
 	def validate(self):
+		if self.is_new() and not self.flags.jmhz_internal:
+			# rows and amounts come only from a parsed file (upload of the XML)
+			frappe.throw(_("Import JMHZ vzniká jen nahráním XML souboru."))
 		if self.status == importer.NAHLED:
 			importer.validate_pairing(self)
 			importer.refresh_rows(self)
-		elif not self.flags.jmhz_internal and not self.is_new():
+		elif not self.flags.jmhz_internal:
 			# after leaving the preview the import is read-only for users
 			frappe.throw(_("Import ve stavu {0} už nejde upravovat.").format(self.status))
 
