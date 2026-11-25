@@ -166,6 +166,12 @@ System Manager gets no access.
    is compared with the report line by line; any difference rolls everything back.
 4. **Odeslat pásky:** submits the slips. Employees then see them in the desk and in `/hrms`.
 
+**Corrections.** A corrective report (`O`) replaces the slips of the persons it contains, the
+others stay unchanged. A regular report from a different file for the same period replaces the
+earlier import only after HR confirms it. A cancelling report (`S`) cancels all JMHZ slips of the
+period with **Provést storno**. **Zrušit import** cancels the slips and Additional Salaries of one
+import; the same file can then be imported again.
+
 **Guards** (can be relaxed in JMHZ Settings where noted):
 
 - a JMHZ slip is submitted and cancelled only from its import, never directly or in bulk from the
