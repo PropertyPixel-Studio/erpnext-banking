@@ -1,7 +1,8 @@
 frappe.ui.form.on("JMHZ Import", {
 	refresh(frm) {
 		const preview = frm.doc.status === "Náhled";
-		frm.set_read_only(!preview);
+		// frm.set_read_only() takes no argument and always locks the form: call it only outside the preview
+		if (!preview) frm.set_read_only();
 		frm.set_df_property("replace_confirmed", "read_only", !preview);
 		frm.fields_dict.rows.grid.update_docfield_property("employee", "read_only", !preview);
 		frm.fields_dict.rows.grid.update_docfield_property("skip", "read_only", !preview);
