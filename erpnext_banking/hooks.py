@@ -11,8 +11,12 @@ app_license = "MIT"
 
 required_apps = ["erpnext", "hrms"]
 
-# JMHZ module: idempotent setup of salary components, structure and settings
-after_migrate = "erpnext_banking.jmhz.setup.after_migrate"
+after_migrate = [
+	# JMHZ module: idempotent setup of salary components, structure and settings
+	"erpnext_banking.jmhz.setup.after_migrate",
+	# banking: no rule may book by an account of an employee, salaries are matched from slips
+	"erpnext_banking.salary.remove_account_rules",
+]
 
 
 scheduler_events = {

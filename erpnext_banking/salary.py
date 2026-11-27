@@ -10,9 +10,18 @@ Two directions, one rule (`_salary.py`: account + amount + plausible date, uniqu
 - a submitted slip looks for its payment (`match_slip`), also among transactions that are
   already reconciled, so a slip created after its payment still gets linked.
 
-A matched payment is booked like the other no-document withdrawals: a Journal Entry from
-the bank contra account to the salary account, linked to the bank transaction. The slip
-gets the date and the transaction it was paid by.
+A matched payment is booked by a Journal Entry linked to the bank transaction, and the
+slip gets the date and the transaction it was paid by. What the entry debits follows
+Czech bookkeeping:
+
+- the slip was booked in its period (accrual, JMHZ Settings): the payment settles the
+  payable to the employee, 331 / 221;
+- the slip was not booked: the payment goes straight to the wage expense, 521 / 221,
+  as the account rules did before.
+
+A payment booked to the expense earlier (by a rule or by hand) that now meets a slip with
+an accrual is moved to the payable once (331 / 521), otherwise the wage would be an
+expense twice.
 
 Log messages name documents only, never accounts or amounts.
 """
@@ -84,12 +93,10 @@ def employee_accounts(employee: str) -> list[str]:
 	return accounts
 
 
-def _slip_accounts(slip) -> list[str]:
-	"""Accounts of one slip: of its employee, on the slip itself, and the one read from the
-	printed slip (JMHZ module), which a person has reviewed."""
-	accounts = employee_accounts(slip.employee)
-	if slip.get("bank_account_no"):
-		accounts.append(slip.bank_account_no)
+def _own_accounts(slip) -> list[str]:
+	"""Accounts written on one slip: its own field and the one read from the printed slip
+	(JMHZ module), which a person has reviewed."""
+	accounts = [slip.bank_account_no] if slip.get("bank_account_no") else []
 	try:
 		data = json.loads(slip.get("jmhz_slip_data") or "null") or {}
 	except ValueError:
@@ -99,14 +106,61 @@ def _slip_accounts(slip) -> list[str]:
 	return accounts
 
 
+def _slip_accounts(slip) -> list[str]:
+	"""Every account a payment of the slip can go to: of its employee and on the slip."""
+	return employee_accounts(slip.employee) + _own_accounts(slip)
+
+
+def known_employee_accounts() -> list[str]:
+	"""Every account ERPNext knows as an employee's: master data of all employees, also
+	former ones, and the accounts on all submitted slips."""
+	accounts = []
+	for e in frappe.get_all("Employee", filters={}, fields=["bank_ac_no", "iban"]):
+		accounts += [a for a in (e.bank_ac_no, e.iban) if a]
+	for row in _bank_account_texts({"party_type": "Employee"}):
+		accounts += row["accounts"]
+	fields = ["bank_account_no"]
+	if frappe.db.has_column("Salary Slip", "jmhz_slip_data"):
+		fields.append("jmhz_slip_data")
+	for slip in frappe.get_all("Salary Slip", filters={"docstatus": 1}, fields=fields):
+		accounts += _own_accounts(slip)
+	return accounts
+
+
 def is_employee_account(counter) -> bool:
-	"""The account belongs to an active or former employee, by the master data."""
-	if not counter:
-		return False
-	employees = frappe.get_all("Employee", filters={}, fields=["bank_ac_no", "iban"])
-	if any(has_account([e.bank_ac_no, e.iban], counter) for e in employees):
-		return True
-	return any(has_account(r["accounts"], counter) for r in _bank_account_texts({"party_type": "Employee"}))
+	return bool(counter) and has_account(known_employee_accounts(), counter)
+
+
+def remove_account_rules() -> int:
+	"""Delete Bank Matching Rules that book by an account of an employee. Salaries are
+	matched from the slips now, and an account of a person does not belong into a rule.
+	Runs after every migrate; a rule for an account ERPNext does not know is left alone.
+	Returns how many rules were deleted."""
+	removed = 0
+	try:
+		if not frappe.db.exists("DocType", "Bank Matching Rule"):
+			return 0
+		accounts = known_employee_accounts()
+		rules = frappe.get_all(
+			"Bank Matching Rule", filters={"rule_type": "auto_je"}, fields=["name", "pattern"]
+		)
+		for rule in rules:
+			if has_account(accounts, normalize_account(rule.pattern)):
+				# permanently: Deleted Document would keep the account readable
+				frappe.delete_doc(
+					"Bank Matching Rule",
+					rule.name,
+					ignore_permissions=True,
+					force=True,
+					delete_permanently=True,
+				)
+				removed += 1
+		if removed:
+			frappe.logger("erpnext_banking").info(f"removed {removed} salary account rule(s)")
+	except Exception:
+		# a migrate must never fail because of this clean-up
+		frappe.log_error("Removing salary account rules failed", "erpnext_banking")
+	return removed
 
 
 # --- candidates ------------------------------------------------------------------
@@ -157,21 +211,40 @@ def _mark_paid(slip_name: str, bt) -> None:
 	)
 
 
+def _expense_account(settings) -> str:
+	return _setting(settings, "salary_account", DEFAULT_SALARY_ACCOUNT)
+
+
+def _payable_line(slip_name: str) -> dict | None:
+	"""Account and party to debit when the slip was booked in its period, else None."""
+	from erpnext_banking.jmhz import accounting
+
+	if not accounting.accrued(slip_name):
+		return None
+	account = accounting.payable_account()
+	employee = frappe.db.get_value("Salary Slip", slip_name, "employee")
+	return {"account": account, **accounting.party_fields(account, employee)}
+
+
 def _book(bt, slip: dict, settings) -> None:
 	"""Journal Entry for the payment, linked to the bank transaction, and the slip marked paid."""
 	amount = float(bt.withdrawal)
+	payable = _payable_line(slip["name"])
 	payload = journal_entry_payload(
 		company=settings.company,
 		posting_date=bt.date,
 		amount=amount,
-		debit_account=_setting(settings, "salary_account", DEFAULT_SALARY_ACCOUNT),
+		debit_account=payable["account"] if payable else _expense_account(settings),
 		credit_account=_setting(settings, "je_contra_account", DEFAULT_JE_CONTRA_ACCOUNT),
-		cost_center=_setting(settings, "default_cost_center", DEFAULT_COST_CENTER),
+		# a cost center belongs to the expense, not to the payable
+		cost_center=None if payable else _setting(settings, "default_cost_center", DEFAULT_COST_CENTER),
 		# the slip is enough to find the person; no name or account in the ledger remark
 		remark=f"mzda {slip['end_date']:%m/%Y} | {slip['name']}",
 		reference_no=(bt.reference_number or bt.name),
 		reference_date=bt.date,
 	)
+	if payable:
+		payload["accounts"][0].update(payable)
 	je = frappe.get_doc(payload)
 	je.insert(ignore_permissions=True)
 	je.submit()
@@ -257,8 +330,60 @@ def match_slip(slip_name: str, settings) -> str | None:
 	if bt.status == "Unreconciled":
 		_book(bt, data, settings)
 		return "matched"
+	_move_to_payable(bt, data, settings)
 	_mark_paid(data["name"], bt)  # booked earlier, by a rule or by hand
 	return "linked"
+
+
+RECLASS_PREFIX = "přeúčtování výplaty na závazek"
+
+
+def _move_to_payable(bt, slip: dict, settings) -> None:
+	"""The payment was booked to the wage expense and the slip now has an accrual: move it to
+	the payable (331 / 521), once per bank transaction."""
+	payable = _payable_line(slip["name"])
+	if not payable:
+		return
+	expense = _expense_account(settings)
+	entries = [e.payment_entry for e in bt.payment_entries if e.payment_document == "Journal Entry"]
+	amount = float(bt.withdrawal)
+	to_expense = entries and frappe.get_all(
+		"Journal Entry Account",
+		filters={"parent": ["in", entries], "account": expense, "debit_in_account_currency": amount},
+		limit=1,
+	)
+	if not to_expense:
+		return  # booked to the payable already, or some other way a person chose
+	moved = frappe.get_all(
+		"Journal Entry",
+		filters={"docstatus": 1, "cheque_no": bt.name, "user_remark": ["like", f"{RECLASS_PREFIX}%"]},
+		limit=1,
+	)
+	if moved:
+		return
+	cost_center = _setting(settings, "default_cost_center", DEFAULT_COST_CENTER)
+	je = frappe.get_doc(
+		{
+			"doctype": "Journal Entry",
+			"voucher_type": "Journal Entry",
+			"company": settings.company,
+			"posting_date": bt.date,
+			"cheque_no": bt.name,
+			"cheque_date": bt.date,
+			"user_remark": f"{RECLASS_PREFIX} {slip['end_date']:%m/%Y} | {slip['name']}",
+			"accounts": [
+				{**payable, "debit_in_account_currency": amount, "credit_in_account_currency": 0},
+				{
+					"account": expense,
+					"debit_in_account_currency": 0,
+					"credit_in_account_currency": amount,
+					"cost_center": cost_center,
+				},
+			],
+		}
+	)
+	je.insert(ignore_permissions=True)
+	je.submit()
 
 
 def match_open_slips(settings, today=None) -> int:

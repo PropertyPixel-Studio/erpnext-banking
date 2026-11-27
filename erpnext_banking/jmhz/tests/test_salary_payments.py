@@ -19,7 +19,9 @@ SALARY_ACCOUNT = "521 - Mzdové náklady - PXG"
 BANK_GL = "221 - Bankovní účty CZK - PXG"
 
 
-class TestSalaryPayments(JmhzTestCase):
+class SalaryPaymentCase(JmhzTestCase):
+	"""A company bank account, an employee with an account, and helpers. No tests here."""
+
 	def setUp(self):
 		super().setUp()
 		# The banking code commits after every booked transaction, on purpose. A test must
@@ -105,6 +107,8 @@ class TestSalaryPayments(JmhzTestCase):
 		bt = frappe.get_doc("Bank Transaction", bt.name)
 		return bt.status, [(e.payment_document, e.payment_entry) for e in bt.payment_entries]
 
+
+class TestSalaryPayments(SalaryPaymentCase):
 	# --- bank transaction -> slip ---
 
 	def test_platba_najde_pasku(self):
@@ -192,7 +196,9 @@ class TestSalaryPayments(JmhzTestCase):
 		"""The employee has no account in the master data; the reviewed printed slip has it."""
 		frappe.db.set_value("Employee", self.emp, "bank_ac_no", None)
 		_, slip = self.slip(pdf_extra={"ucet": "000019-0000000123/0100"})
-		self.assertFalse(salary.is_employee_account(salary.counter_account("Protiúčet: 19-123/0100")))
+		# known as an employee's account because a submitted slip carries it
+		self.assertTrue(salary.is_employee_account(salary.counter_account("Protiúčet: 19-123/0100")))
+		self.assertFalse(salary.is_employee_account(salary.counter_account("Protiúčet: 19-124/0100")))
 		bt = self.payment(account="19-123/0100")
 		self.assertEqual(salary.reconcile_salary(bt, self.settings), "matched")
 		self.assertEqual(self.paid(slip)[0], bt.name)

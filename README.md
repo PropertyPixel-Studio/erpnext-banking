@@ -122,24 +122,31 @@ Two independent signals have to agree, as for invoices:
 - the amount is the net pay of one submitted, not yet paid slip of that employee (±1 Kč), and
   the date is plausible for its period (10 days before to 45 days after the period end).
 
-Exactly one slip → a Journal Entry (debit **Salary Account**, credit the bank contra account,
-remark with the period and the slip, no name or account) linked to the BT, and the slip gets
-`Vyplaceno dne` and the bank transaction. Leading zeros, an empty prefix and a Czech IBAN are
-all read as the same account.
+Exactly one slip → a Journal Entry linked to the BT (remark with the period and the slip, no
+name or account), and the slip gets `Vyplaceno dne` and the bank transaction. Leading zeros, an
+empty prefix and a Czech IBAN are all read as the same account. What the entry debits follows
+Czech bookkeeping:
+
+- the slip was booked in its period (see *Booking of salary slips* in the JMHZ module): the
+  payment settles the payable to the employee, **331 / 221**;
+- the slip was not booked: the payment goes straight to the wage expense, **521 / 221**
+  (**Salary Account** in Fio Settings).
 
 It works in both directions, because a slip is often submitted after its payment:
 
 - a new bank transaction looks for its slip (nightly sync and re-match);
 - a submitted slip looks for its payment right after the submit and again every night. If the
-  payment was already reconciled some other way, only the slip is marked as paid.
+  payment was already reconciled some other way, only the slip is marked as paid. If it was
+  booked to the wage expense and the slip has an accrual, it is moved to the payable once
+  (**331 / 521**), so the wage is not an expense twice.
 
 Money sent to an employee's account that fits no slip (another amount, no slip yet) stays
 **Unreconciled** for a person and is never booked by a rule. Gated by **Auto-Reconcile
 Salaries** in Fio Settings (default on, needs Auto-Reconcile Outgoing).
 
-Rules of type `auto_je` with an account of a person as the pattern are no longer seeded. Rules
-of that kind that already exist keep working for accounts ERPNext does not know as an
-employee's; delete them once the employees have their accounts in ERPNext.
+Rules of type `auto_je` with an account of a person as the pattern are no longer seeded, and
+every `migrate` deletes such rules for accounts ERPNext knows as an employee's (master data or
+a submitted slip), permanently. A rule for an account ERPNext does not know is left alone.
 
 ## Incoming fallback matching (wrong/missing VS)
 
@@ -260,6 +267,28 @@ gets the slip after **Odeslat pásky**: `Vypnuto` (default, nobody), `Jen testov
 or `Všem` (everyone with a preferred e-mail). The same mode applies to the button on the slip and
 to the HRMS list action "Email Salary Slips". Test the e-mail on a test employee with a synthetic
 report before switching to `Všem`.
+
+**Booking of salary slips.** Off by default. With **Účtovat předpis mezd** in JMHZ Settings,
+**Odeslat pásky** also books every slip into its period (posting date = last day of the period)
+by one Journal Entry, in the same transaction:
+
+| What | Entry |
+|---|---|
+| gross wage, including wage compensations | 521 / 331 |
+| insurance withheld from the employee | 331 / 336 |
+| advance tax and withholding tax | 331 / 342 |
+| tax bonus paid with the wage | 342 / 331 |
+| other deductions | 331 / 379 |
+| insurance paid by the employer | 524 / 336 |
+
+After it the payable to the employee (331, with the Employee as the party when the account is
+of type Payable) is exactly the net pay, and the bank payment settles it (331 / 221, see
+*Salary payments*). The accounts are in JMHZ Settings; the setup prefills them by their number
+when the company has exactly one such ledger account and never overwrites them. Booking cannot
+be turned on with an account missing. Cancelling a slip cancels its entry. If the entry cannot
+be posted (closed period, frozen account), **Odeslat pásky** fails as a whole and nothing is
+submitted. Payments of insurance and tax to the authorities (336 / 221, 342 / 221) are not
+matched automatically.
 
 **Guards** (can be relaxed in JMHZ Settings where noted):
 
