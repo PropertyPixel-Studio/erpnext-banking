@@ -52,6 +52,16 @@ frappe.ui.form.on("JMHZ Import", {
 		if (["Náhled", "Pásky vytvořeny"].includes(frm.doc.status) && frm.doc.typ_podani !== "S") {
 			add_pdf_buttons(frm);
 		}
+		if ((frm.doc.rows || []).some((r) => r.slip_pdf)) {
+			// also after the slips are submitted, then read-only
+			const todo = frm.doc.rows.filter((r) => r.slip_pdf && !r.pdf_reviewed).length;
+			const editable = ["Náhled", "Pásky vytvořeny"].includes(frm.doc.status);
+			const button = frm.add_custom_button(
+				todo && editable ? __("Zkontrolovat PDF pásky ({0})", [todo]) : __("Zkontrolované PDF pásky"),
+				() => open_pdf_review(frm)
+			);
+			if (todo && editable && frm.doc.status === "Pásky vytvořeny") button.addClass("btn-primary");
+		}
 		if (frm.doc.status === "Pásky vytvořeny") {
 			frm.add_custom_button(__("Odeslat pásky"), () => {
 				frappe.confirm(
@@ -189,4 +199,197 @@ function add_pdf_buttons(frm) {
 			group
 		);
 	}
+}
+
+
+// --- review of the printed slips, person by person ---------------------------------
+// The cut of the printed slip on the left, the values read from it on the right. Unread
+// values are highlighted. Values outside the 12 control fields can be corrected; a
+// correction cancels the confirmation. Nothing here is shown to employees.
+
+function open_pdf_review(frm, row_name) {
+	const rows = (frm.doc.rows || []).filter((r) => r.slip_pdf);
+	if (!rows.length) return;
+	const start = row_name || (rows.find((r) => !r.pdf_reviewed) || rows[0]).name;
+	const d = new frappe.ui.Dialog({
+		title: __("Kontrola PDF pásky"),
+		size: "extra-large",
+		fields: [
+			{
+				fieldname: "row",
+				fieldtype: "Select",
+				label: __("Osoba"),
+				options: rows.map((r) => ({ value: r.name, label: review_row_label(r) })),
+				default: start,
+				onchange: () => load_pdf_review(frm, d),
+			},
+			{ fieldname: "body", fieldtype: "HTML" },
+		],
+		primary_action_label: __("Potvrdit kontrolu"),
+		primary_action: () => confirm_pdf_review(frm, d),
+		secondary_action_label: __("Uložit opravy"),
+		secondary_action: () => save_pdf_corrections(frm, d).then(() => load_pdf_review(frm, d)),
+	});
+	d.onhide = () => frm.reload_doc();
+	d.show();
+	d.set_value("row", start).then(() => load_pdf_review(frm, d));
+}
+
+function review_row_label(r) {
+	const name = [r.pseudonym, r.employee_name].filter(Boolean).join(" – ");
+	return (r.pdf_reviewed ? "✓ " : "… ") + name;
+}
+
+function load_pdf_review(frm, d) {
+	const row = d.get_value("row");
+	if (!row) return Promise.resolve();
+	return frappe
+		.call({ method: "erpnext_banking.jmhz.api.pdf_review_data", args: { name: frm.doc.name, row } })
+		.then((r) => render_pdf_review(d, r.message));
+}
+
+function render_pdf_review(d, data) {
+	const esc = frappe.utils.escape_html;
+	d.jmhz_review = data;
+	const status = [];
+	if (data.pdf_check === "Neshoda")
+		status.push(
+			`<div class="alert alert-danger">${__("Neshoda")}: ${esc(data.pdf_check_detail || "")}</div>`
+		);
+	else if (data.pdf_check === "Potvrzeno ručně")
+		status.push(
+			`<div class="alert alert-warning">${__("Neshoda potvrzená ručně")}: ${esc(
+				data.pdf_check_detail || ""
+			)}</div>`
+		);
+	const unread = data.blocks.reduce((n, b) => n + b.rows.filter((r) => r.unread).length, 0);
+	if (unread)
+		status.push(
+			`<div class="alert alert-warning">${__(
+				"Nepřečtená pole: {0}. Doplňte je podle výřezu, nebo je nechte prázdná, pokud na pásce nic není.",
+				[unread]
+			)}</div>`
+		);
+	if (data.reviewed)
+		status.push(
+			`<div class="alert alert-success">${__("Zkontroloval {0}, {1}", [
+				esc(data.reviewed_by || ""),
+				esc(frappe.datetime.str_to_user(data.reviewed_on) || ""),
+			])}</div>`
+		);
+
+	const blocks = data.blocks
+		.map((b) => {
+			const rows = b.rows
+				.map((r) => {
+					const marks = [];
+					if (r.unread) marks.push(`<span class="indicator-pill orange">${__("nepřečteno")}</span>`);
+					if (r.corrected) marks.push(`<span class="indicator-pill blue">${__("opraveno ručně")}</span>`);
+					const value =
+						r.editable && data.editable
+							? `<input type="text" class="form-control input-xs jmhz-review-input" data-key="${esc(
+									r.key
+							  )}" data-original="${esc(r.value)}" value="${esc(r.value)}" style="text-align:${
+									r.kind === "text" ? "left" : "right"
+							  }">`
+							: `<div style="text-align:${r.kind === "text" ? "left" : "right"}">${esc(r.value)}${
+									r.kind === "rate" && r.value ? " %" : ""
+							  }</div>`;
+					const background = r.unread ? "background: var(--bg-orange);" : "";
+					return `<tr style="${background}"><td style="padding: 3px 8px; vertical-align: middle">${esc(
+						r.label
+					)} ${marks.join(
+						" "
+					)}</td><td style="width: 38%; padding: 3px 8px; vertical-align: middle">${value}</td></tr>`;
+				})
+				.join("");
+			return `<h6 style="margin-top: 12px">${esc(b.title)}</h6><table class="table table-condensed" style="margin-bottom: 4px">${rows}</table>`;
+		})
+		.join("");
+
+	// the cut is a private file of the import: only HR Manager can open it
+	const html = `${status.join("")}
+		<div class="row">
+			<div class="col-md-7">
+				<iframe src="${encodeURI(data.slip_pdf)}#toolbar=0&view=FitH" style="width: 100%; height: 72vh; border: 1px solid var(--border-color)"></iframe>
+			</div>
+			<div class="col-md-5" style="height: 72vh; overflow-y: auto">${blocks}</div>
+		</div>`;
+	d.fields_dict.body.$wrapper.html(html);
+	// a confirmed slip can be opened again: the same button takes the confirmation back
+	d.get_primary_btn()
+		.text(data.reviewed ? __("Vzít potvrzení zpět") : __("Potvrdit kontrolu"))
+		.prop("disabled", !data.editable);
+	d.get_secondary_btn().toggle(!!data.editable);
+}
+
+function pdf_review_changes(d) {
+	const values = {};
+	d.fields_dict.body.$wrapper.find(".jmhz-review-input").each(function () {
+		const input = $(this);
+		if (input.val().trim() !== String(input.data("original"))) values[input.data("key")] = input.val();
+	});
+	return values;
+}
+
+function save_pdf_corrections(frm, d) {
+	const values = pdf_review_changes(d);
+	if (!Object.keys(values).length) return Promise.resolve();
+	return frappe.call({
+		method: "erpnext_banking.jmhz.api.correct_pdf",
+		args: { name: frm.doc.name, row: d.get_value("row"), values },
+		freeze: true,
+	});
+}
+
+function confirm_pdf_review(frm, d) {
+	if (d.jmhz_review && d.jmhz_review.reviewed) {
+		return frappe
+			.call({
+				method: "erpnext_banking.jmhz.api.unreview_pdf",
+				args: { name: frm.doc.name, row: d.get_value("row") },
+				freeze: true,
+			})
+			.then(() => load_pdf_review(frm, d));
+	}
+	const send = (accept_mismatch) =>
+		frappe
+			.call({
+				method: "erpnext_banking.jmhz.api.review_pdf",
+				args: { name: frm.doc.name, row: d.get_value("row"), accept_mismatch: accept_mismatch ? 1 : 0 },
+				freeze: true,
+			})
+			.then(() => next_pdf_review(frm, d));
+	// corrections first: they are checked again on the server and may change the result
+	save_pdf_corrections(frm, d)
+		.then(() => load_pdf_review(frm, d))
+		.then(() => {
+			const data = d.jmhz_review;
+			if (data.pdf_check !== "Neshoda") return send(false);
+			frappe.confirm(
+				__("PDF páska nesedí: {0}. Potvrzujete, že je to v pořádku?", [
+					frappe.utils.escape_html(data.pdf_check_detail || ""),
+				]),
+				() => send(true)
+			);
+		});
+}
+
+function next_pdf_review(frm, d) {
+	return frm.reload_doc().then(() => {
+		const rows = (frm.doc.rows || []).filter((r) => r.slip_pdf);
+		d.set_df_property(
+			"row",
+			"options",
+			rows.map((r) => ({ value: r.name, label: review_row_label(r) }))
+		);
+		const next = rows.find((r) => !r.pdf_reviewed);
+		if (!next) {
+			d.onhide = null;
+			d.hide();
+			frappe.show_alert({ message: __("Všechny PDF pásky jsou zkontrolované."), indicator: "green" });
+			return;
+		}
+		return d.set_value("row", next.name).then(() => load_pdf_review(frm, d));
+	});
 }

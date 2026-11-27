@@ -164,7 +164,9 @@ System Manager gets no access.
    reason. The pairing is remembered in `JMHZ Person`.
 3. **Vytvořit pásky:** Additional Salaries and draft Salary Slips, in one transaction. Every slip
    is compared with the report line by line; any difference rolls everything back.
-4. **Odeslat pásky:** submits the slips. Employees then see them in the desk and in `/hrms`.
+4. Optional: **Nahrát PDF pásky** and **Zkontrolovat PDF pásky** (see *Printed slips* below). Every
+   printed slip has to be reviewed by a person before the next step.
+5. **Odeslat pásky:** submits the slips. Employees then see them in the desk and in `/hrms`.
 
 **Informative values.** Besides the slip amounts the parser reads values that only describe the
 slip: the monthly tax credits, the average hourly earnings, the kind of employment, the split of
@@ -197,6 +199,24 @@ Three checks, any failure blocks **Odeslat pásky** until HR confirms it:
   the informative values of the report, where both sides have them;
 - the internal sums of the slip: leave balance, rounded tax base, tax, advance after credits and
   the gross wage as the sum of its components.
+
+**Review.** Reading a printed slip is fragile, and values that exist only on the printed slip
+(leave, wage rate) have nothing to be checked against. So every row with a printed slip has to be
+looked at: **Zkontrolovat PDF pásky** shows the cut next to the values read from it, with unread
+values highlighted. HR can correct any value outside the 12 control fields (an empty value means
+"nothing is printed there") and then confirms the row; a mismatch has to be accepted in the same
+step. A correction or a different report cancels the confirmation, the same report uploaded again
+keeps it. **Odeslat pásky** is refused while a row with a printed slip is not confirmed. A row
+without a printed slip blocks nothing.
+
+**Full slip.** Everything the slip shows beyond its amounts is stored on the Salary Slip in
+`jmhz_slip_data` (JSON, see `slip_data.py`): the printed slip block by block and the informative
+values of the report. It is written when the slip is created and rewritten on the draft whenever
+the printed slip, a correction or the review changes; a submitted slip is never changed. A print
+format should read only this field and the `jmhz_*` fields, never the import, which employees
+cannot read. The totals in it come from the JMHZ report even when HR accepted a mismatch. Slips
+created by an older version have no such data and print as before; to add it, cancel the import
+and import the month again with its report.
 
 The report and the cuts are private Files attached to the JMHZ Import, so only HR Manager can open
 them, and they stay there after the slips are submitted. They must never be sent to employees: the

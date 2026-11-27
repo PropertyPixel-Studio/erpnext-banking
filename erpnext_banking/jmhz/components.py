@@ -233,6 +233,17 @@ DRUH_CINNOSTI = Extra(
 )
 # 1-16 or one or two capital letters
 DRUH_CINNOSTI_PATTERN = r"(?:[1-9][0-9]?|[A-Z]{1,2})"
+# the three common kinds by their usual abbreviation, the others stay as the code
+DRUH_CINNOSTI_GROUPS = (
+	("pracovní poměr", tuple("123456789")),
+	("DPČ", tuple("ABCDEFGHIJ")),
+	("DPP", ("T", "U", "V", "W", "X", "Y", "Z", "ZA", "ZB", "ZC")),
+)
+
+
+def druh_cinnosti_label(code: str) -> str:
+	return next((label for label, codes in DRUH_CINNOSTI_GROUPS if code in codes), code)
+
 
 EXTRAS: tuple[Extra, ...] = (
 	OSVOBOZENE_PRIJMY,
