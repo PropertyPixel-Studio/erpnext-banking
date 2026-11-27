@@ -166,6 +166,13 @@ System Manager gets no access.
    is compared with the report line by line; any difference rolls everything back.
 4. **Odeslat pásky:** submits the slips. Employees then see them in the desk and in `/hrms`.
 
+**Informative values.** Besides the slip amounts the parser reads values that only describe the
+slip: the monthly tax credits, the average hourly earnings, the kind of employment, the split of
+bonuses and overtime hours, the employer contributions and the exempt income. They are stored on
+the import row, never change an amount and never block a person; a value that cannot be read is
+left out with a warning (`P14`). Only amounts are read: who the children or the spouse are is
+never read and never stored. Rows imported by an older version do not have these values.
+
 **Corrections.** A corrective report (`O`) replaces the slips of the persons it contains, the
 others stay unchanged. A regular report from a different file for the same period replaces the
 earlier import only after HR confirms it. A cancelling report (`S`) cancels all JMHZ slips of the

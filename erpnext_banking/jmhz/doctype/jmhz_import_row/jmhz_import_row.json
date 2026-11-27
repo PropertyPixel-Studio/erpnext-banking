@@ -40,7 +40,8 @@
   "column_break_pdf",
   "email_status",
   "lines_json",
-  "pdf_fields"
+  "pdf_fields",
+  "jmhz_extra"
  ],
  "fields": [
   {
@@ -273,11 +274,18 @@
    "hidden": 1,
    "label": "Hodnoty z PDF pásky",
    "read_only": 1
+  },
+  {
+   "fieldname": "jmhz_extra",
+   "fieldtype": "JSON",
+   "hidden": 1,
+   "label": "Doplňkové údaje z JMHZ",
+   "read_only": 1
   }
  ],
  "istable": 1,
  "links": [],
- "modified": "2026-11-25 22:00:00",
+ "modified": "2026-11-27 12:00:00",
  "modified_by": "Administrator",
  "module": "JMHZ",
  "name": "JMHZ Import Row",

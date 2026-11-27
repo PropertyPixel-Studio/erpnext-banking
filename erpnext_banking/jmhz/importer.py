@@ -229,6 +229,9 @@ def row_from_person(person: Person, employee: str | None) -> dict:
 			],
 			ensure_ascii=False,
 		),
+		# always a JSON object: an empty one says "read, nothing reported", unlike the
+		# missing value of rows imported before the field existed
+		"jmhz_extra": json.dumps(person.extra, ensure_ascii=False),
 		# parser issues are kept as the first lines of `issues`, see row_parser_issues()
 		"issues": "\n".join(_issue_text(i.code, i.message) for i in person.issues),
 		"pdf_check": "Bez PDF",
@@ -241,6 +244,13 @@ def row_from_person(person: Person, employee: str | None) -> dict:
 
 def row_lines(row) -> list[dict]:
 	return json.loads(row.lines_json or "[]")
+
+
+def row_extra(row) -> dict | None:
+	"""Informative values of the report (`components.EXTRAS`). None = the row was imported
+	before these values were read, so nothing is known about them. In the dict a missing
+	key is zero and None is a value that could not be read."""
+	return json.loads(row.jmhz_extra) if row.jmhz_extra else None
 
 
 def row_parser_codes(row) -> set[str]:

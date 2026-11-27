@@ -6,6 +6,7 @@ SP 1091, ZP 691, advance tax 0 -> net income 13571.
 """
 
 import ast
+import dataclasses
 import pathlib
 
 import pytest
@@ -50,6 +51,7 @@ def test_hpp_vzor_mpsv():
 	assert (p.sp_zamestnavatel, p.zp_zamestnavatel) == (1091 * 3, 691 * 2)
 	assert p.pseudonym == pseudonym("1111111111")
 	assert p.id_ppv == ["9000000001"]
+	assert p.extra == {}  # no informative values in the file
 
 
 def test_bonus_neni_v_cistem_prijmu():
@@ -337,6 +339,7 @@ def test_dve_ppv_hodiny_bez_prumerneho_vydelku():
 	assert codes(p) == {"P10"}
 	assert p.id_ppv == ["9000000001", "9000000002"]
 	assert p.info == {"odpracovane_hodiny": 30.0}  # P-5: average earnings are not summed
+	assert "prumerny_vydelek" not in p.extra  # two different averages: neither is shown
 	assert lines(p) == {"Mzda za práci": (3000, "earning")}
 
 
@@ -415,6 +418,22 @@ def test_zpravy_neobsahuji_data():
 	assert len(messages) >= 6
 	data = [ik, ppv, "9988776655", "5544332211", "98761", "98753", "99991", "12347", "23459", "7777", "6666"]
 	data += ["5555", "11113", "4444", "3333", "55551", "77771"]
+	# unreadable informative values: the message names the element, never the value
+	extras = form(
+		ik="1122334455",
+		ppv="6677889900",
+		zuct=100,
+		mzda=100,
+		cisty=100,
+		slevy={"zakladniSleva": "25701.5", "slevaDite": "-12671"},
+		prumerny_vydelek="x38219",
+		druh_cinnosti="q7q",
+	)
+	r2 = parse(report(extras))
+	assert set(r2.persons[0].issue_codes) == {"P14"}
+	messages += [i.message for i in r2.persons[0].issues]
+	assert len(r2.persons[0].issues) == 4
+	data += ["1122334455", "6677889900", "25701", "12671", "38219", "q7q"]
 	for m in messages:
 		for d in data:
 			assert d not in m, (d, m)
@@ -426,6 +445,224 @@ def test_has_income_a_blokace():
 	assert codes(p) == {"P11"} and not p.has_income
 	(p,) = parse(report(form(typ="O"))).persons
 	assert "P12" in codes(p) and p.has_income and "P11" not in codes(p)
+
+
+# --- informative values for the full slip ----------------------------------------
+
+SLEVY = {
+	"zakladniSleva": 2570,
+	"zakladniSlevaInvalidita12": 210,
+	"rozsirenaSlevaInvalidita3": 420,
+	"slevaZTPP": 1345,
+	"danoveZvyhodneniDetiMesic": 1267,
+	"slevaDite": 900,
+}
+
+
+@pytest.mark.parametrize("ver", ["1.4", "1.5"])
+def test_slevy_na_dani_1_4_a_1_5(ver):
+	slevy = dict(SLEVY)
+	if ver == "1.5":
+		slevy["slevaStudent"] = 335  # exists only in 1.5
+	f = form(ver, zuct=40000, mzda=40000, zal=555, cisty=39445, slevy=slevy)
+	(p,) = parse(report(f, ver=ver)).persons
+	assert codes(p) == set()
+	expected = {
+		"sleva_poplatnik": 2570,
+		"sleva_invalidita": 210,
+		"sleva_invalidita_rozsirena": 420,
+		"sleva_ztpp": 1345,
+		"zvyhodneni_deti": 1267,
+		"sleva_deti": 900,
+	}
+	if ver == "1.5":
+		expected["sleva_student"] = 335
+	assert p.extra == expected
+	assert all(isinstance(v, int) for v in p.extra.values())
+	# informative only: the slip lines and the amounts are the same as without them
+	(plain,) = parse(report(form(ver, zuct=40000, mzda=40000, zal=555, cisty=39445), ver=ver)).persons
+	assert (lines(p), p.k_vyplate) == (lines(plain), plain.k_vyplate)
+
+
+def test_slevy_cesta_podle_verze():
+	# the declaration moved under zalohaNaDan in 1.5: the 1.4 place is not read in a 1.5 file
+	x = report(form("1.4", zuct=100, mzda=100, cisty=100, slevy=SLEVY)).replace(b"/1.0", b"/2027")
+	x = x.replace(b"n1:formulareOsob", b"n1:formulareZamestnani").replace(
+		b"n1:formularOsoby", b"form:formularZamestnani"
+	)
+	r = parse(x)
+	assert r.schema == "1.5"
+	(p,) = r.persons
+	assert p.k_vyplate == 100 and p.extra == {}
+	# and the other way round
+	x = report(form("1.5", zuct=100, mzda=100, cisty=100, slevy=SLEVY), ver="1.5").replace(b"/2027", b"/1.0")
+	x = x.replace(b"n1:formulareZamestnani", b"n1:formulareOsob").replace(
+		b"form:formularZamestnani", b"n1:formularOsoby"
+	)
+	(p,) = parse(x).persons
+	assert p.k_vyplate == 100 and p.extra == {}
+
+
+@pytest.mark.parametrize("ver", ["1.4", "1.5"])
+def test_udaje_o_detech_se_nectou(ver):
+	# only the amounts of the child tax credit are read, never who the children are
+	dite = ("Vymyslenejmeno", "Vymysleneprijmeni", "7700112233")
+	f = form(
+		ver,
+		zuct=100,
+		mzda=100,
+		cisty=100,
+		slevy={"danoveZvyhodneniDetiMesic": 1267, "slevaDite": 100},
+		deti=dite,
+	)
+	x = report(f, ver=ver)
+	assert all(d.encode() in x for d in dite)
+	r = parse(x)
+	(p,) = r.persons
+	assert p.extra == {"zvyhodneni_deti": 1267, "sleva_deti": 100}
+	dump = repr(dataclasses.asdict(r))
+	for d in dite:
+		assert d not in dump
+
+
+def test_doplnkove_udaje_bez_cest_k_osobnim_udajum():
+	# guard for new entries: no path may lead into the blocks with personal data
+	forbidden = {"zvyhodneniDetiMesic", "zvyhodneniNaDeti", "vyzivovaneDeti", "vyzivovaneDite", "dite"}
+	forbidden |= {"deti", "jineOsoby", "jinaOsoba", "osoba", "slevaNaPartnera", "partner", "partnerUdaje"}
+	forbidden |= {"jmeno", "prijmeni", "rodneCislo", "datumNarozeni", "vysledekRocnihoZuctovani"}
+	keys, ids = set(), set()
+	for x in C.EXTRAS:
+		assert x.paths and set(x.paths) <= {"1.4", "1.5"}
+		for path in x.paths.values():
+			assert not forbidden & set(path.split(".")), path
+			assert path.split(".")[0] in ("souhrnDataZec", "mzda", "prubehZamestnani", "identifikace")
+		keys.add(x.key)
+		ids.add(x.jmhz_id)
+	assert len(keys) == len(ids) == len(C.EXTRAS)
+	assert C.EXTRA_BY_KEY.keys() == keys
+
+
+def test_prispevky_zamestnavatele():
+	prispevky = {
+		"prispevekZelSporeniOsvob": 2400,
+		"prispevekZelPojDlPece": 100,
+		"prispevekPenzPripoj": -300,  # a correction may be negative
+		"prispevekDoplnPenzPripoj": 1500,
+		"prispevekPenzPoj": 200,
+		"prispevekZivotPoj": 400,
+		"prispevekDip": 500,
+	}
+	(p,) = parse(report(form(zuct=100, mzda=100, cisty=100, prispevky=prispevky))).persons
+	assert codes(p) == set()
+	assert p.extra == {
+		"prispevek_sporeni": 2400,
+		"prispevek_dlouhodoba_pece": 100,
+		"prispevek_penzijni_pripojisteni": -300,
+		"prispevek_doplnkove_penzijni": 1500,
+		"prispevek_penzijni_pojisteni": 200,
+		"prispevek_zivotni_pojisteni": 400,
+		"prispevek_dip": 500,
+	}
+	# 1.5 reports only the total
+	f = form("1.5", zuct=100, mzda=100, cisty=100, prispevky={"prispevekZelSporeniOsvob": 2400})
+	(p,) = parse(report(f, ver="1.5")).persons
+	assert p.extra == {"prispevek_sporeni": 2400}
+
+
+def test_osvobozene_prijmy_na_osobe():
+	# 10289 inside 10344: no P07, the amount is kept for the slip
+	(p,) = parse(report(form(zuct=20000, osvobozeno=5000, mzda=20000, cisty=20000))).persons
+	assert codes(p) == set()
+	assert p.extra == {"osvobozene_prijmy": 5000}
+	(p,) = parse(report(form(zuct=20000, osvobozeno=5000, mzda=20000, cisty=15000))).persons
+	assert "P07" in codes(p) and p.extra == {"osvobozene_prijmy": 5000}
+
+
+def test_rozpad_priplatku_a_prescasy():
+	priplatky = {"celkem": 1000, "prescas": 400, "nocni": 300, "sobotaNedele": 200, "svatek": 100}
+	a = form(
+		ppv="9000000001",
+		zuct=12500,
+		mzda=11000,
+		rozpad={"tarif": 10000, "priplatky": priplatky},
+		cisty=12500,
+		hodiny=160,
+		hodiny_prescas="6.5",
+	)
+	b = form(
+		ppv="9000000002",
+		primarni=False,
+		souhrn=False,
+		mzda=1500,
+		rozpad={"tarif": 1300, "priplatky": {"celkem": 200, "prescas": 200}},
+		hodiny=20,
+		hodiny_prescas=2,
+	)
+	(p,) = parse(report(a, b)).persons
+	assert codes(p) == {"P10"}
+	# the split is informative, the slip keeps one component
+	assert lines(p) == {"Tarifní mzda": (11300, "earning"), "Příplatky": (1200, "earning")}
+	assert p.extra == {
+		"priplatek_prescas": 600,
+		"priplatek_noc": 300,
+		"priplatek_vikend": 200,
+		"priplatek_svatek": 100,
+		"hodiny_prescas": 8.5,
+	}
+
+
+def test_druh_cinnosti_a_prumerny_vydelek():
+	one = form(zuct=100, mzda=100, cisty=100, druh_cinnosti="T", prumerny_vydelek="187.125")
+	(p,) = parse(report(one)).persons
+	assert p.extra == {"prumerny_vydelek": 187.125, "druh_cinnosti": "T"}
+	# two employments: the codes are listed, the average only when it is the same
+	a = form(ppv="9000000001", zuct=300, mzda=100, cisty=300, druh_cinnosti="1", prumerny_vydelek=150)
+	b = form(
+		ppv="9000000002", primarni=False, souhrn=False, mzda=200, druh_cinnosti="ZA", prumerny_vydelek=200
+	)
+	c = form(ppv="9000000003", primarni=False, souhrn=False, mzda=0, druh_cinnosti="1", prumerny_vydelek=150)
+	(p,) = parse(report(a, b, c)).persons
+	assert p.extra == {"druh_cinnosti": "1, ZA"}
+	(p,) = parse(report(a, c)).persons
+	assert p.extra == {"prumerny_vydelek": 150.0, "druh_cinnosti": "1"}
+
+
+@pytest.mark.parametrize(
+	"kw,key",
+	[
+		({"slevy": {"zakladniSleva": "abc"}}, "sleva_poplatnik"),
+		({"slevy": {"zakladniSleva": "2570.50"}}, "sleva_poplatnik"),
+		({"slevy": {"slevaDite": -5}}, "sleva_deti"),
+		({"slevy": {"zakladniSleva": "NaN"}}, "sleva_poplatnik"),
+		({"prispevky": {"prispevekZivotPoj": -5}}, "prispevek_zivotni_pojisteni"),
+		({"prumerny_vydelek": "-1"}, "prumerny_vydelek"),
+		({"druh_cinnosti": "dpp"}, "druh_cinnosti"),
+		({"druh_cinnosti": "<b>T</b>"}, "druh_cinnosti"),
+		({"hodiny": 10, "hodiny_prescas": "x"}, "hodiny_prescas"),
+	],
+)
+def test_necitelny_doplnkovy_udaj_neblokuje(kw, key):
+	if "<" in str(kw.get("druh_cinnosti", "")):
+		kw = {"druh_cinnosti": "&lt;b&gt;T&lt;/b&gt;"}
+	(p,) = parse(report(hpp(**kw))).persons
+	assert codes(p) == {"P14"}
+	assert p.blocking_issues == []
+	assert p.extra[key] is None  # unreadable is not the same as zero
+	# the slip itself is untouched
+	assert p.k_vyplate == 13571 and lines(p)["Tarifní mzda"] == (15353, "earning")
+
+
+def test_necitelny_udaj_v_jednom_ze_dvou_ppv():
+	a = form(ppv="9000000001", zuct=300, mzda=100, cisty=300, hodiny=10, hodiny_prescas=2)
+	b = form(ppv="9000000002", primarni=False, souhrn=False, mzda=200, hodiny=10, hodiny_prescas="?")
+	(p,) = parse(report(a, b)).persons
+	assert codes(p) == {"P10", "P14"}
+	assert p.extra == {"hodiny_prescas": None}  # a partial sum would be wrong
+
+
+def test_cela_cisla_s_desetinnou_teckou_v_doplnkovych_udajich():
+	(p,) = parse(report(hpp(slevy={"zakladniSleva": "2570.00"}))).persons
+	assert p.issues == [] and p.extra == {"sleva_poplatnik": 2570}
 
 
 # --- components and module boundaries ----------------------------------------
