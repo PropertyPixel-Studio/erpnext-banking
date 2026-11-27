@@ -164,7 +164,9 @@ System Manager gets no access.
    reason. The pairing is remembered in `JMHZ Person`.
 3. **Vytvořit pásky:** Additional Salaries and draft Salary Slips, in one transaction. Every slip
    is compared with the report line by line; any difference rolls everything back.
-4. **Odeslat pásky:** submits the slips. Employees then see them in the desk and in `/hrms`.
+4. Optional: **Nahrát PDF pásky** and **Zkontrolovat PDF pásky** (see *Printed slips* below). Every
+   printed slip has to be reviewed by a person before the next step.
+5. **Odeslat pásky:** submits the slips. Employees then see them in the desk and in `/hrms`.
 
 **Informative values.** Besides the slip amounts the parser reads values that only describe the
 slip: the monthly tax credits, the average hourly earnings, the kind of employment, the split of
@@ -180,13 +182,47 @@ period with **Provést storno**. **Zrušit import** cancels the slips and Additi
 import; the same file can then be imported again.
 
 **Printed slips (optional).** In preview or after creating the slips, **Nahrát PDF pásky** takes
-the summary report of printed payroll slips from the payroll system. The report is processed in
-memory and never stored. Each slip is cut out, matched to a row by its amounts (the name confirms
-and breaks ties) and compared with the report in 12 fields. A mismatch blocks **Odeslat pásky**
-until HR confirms it; a manual deduction entered later is checked again. The cuts are private
-Files attached to the JMHZ Import, so only HR Manager can open them. Cropping hides the rest of the
-page but does not remove it from the file, so the cuts must never be sent to employees.
-**Smazat PDF** removes them; cancelling the import removes them too.
+the summary report of printed payroll slips from the payroll system. Each slip is cut out and
+matched to a row by its amounts (the name confirms and breaks ties). A report of another month is
+refused.
+
+The whole slip is read, not only its totals: worked time, leave, wage components, tax base and
+credits, employer payments, other payments, deductions, the way of payment. Reading is positional
+(`pdf_slips.ZONES` and `SPECS`), so it has to be measured again when the layout of the report
+changes. Twelve control fields are required; any other value that cannot be read is listed as
+unread and is never replaced by zero.
+
+Three checks, any failure blocks **Odeslat pásky** until HR confirms it:
+
+- the 12 control fields against the JMHZ report (a manual deduction entered later is checked again);
+- tax credits, average earnings, kind of employment, exempt income and employer insurance against
+  the informative values of the report, where both sides have them;
+- the internal sums of the slip: leave balance, rounded tax base, tax, advance after credits and
+  the gross wage as the sum of its components.
+
+**Review.** Reading a printed slip is fragile, and values that exist only on the printed slip
+(leave, wage rate) have nothing to be checked against. So every row with a printed slip has to be
+looked at: **Zkontrolovat PDF pásky** shows the cut next to the values read from it, with unread
+values highlighted. HR can correct any value outside the 12 control fields (an empty value means
+"nothing is printed there") and then confirms the row; a mismatch has to be accepted in the same
+step. A correction or a different report cancels the confirmation, the same report uploaded again
+keeps it. **Odeslat pásky** is refused while a row with a printed slip is not confirmed. A row
+without a printed slip blocks nothing.
+
+**Full slip.** Everything the slip shows beyond its amounts is stored on the Salary Slip in
+`jmhz_slip_data` (JSON, see `slip_data.py`): the printed slip block by block and the informative
+values of the report. It is written when the slip is created and rewritten on the draft whenever
+the printed slip, a correction or the review changes; a submitted slip is never changed. A print
+format should read only this field and the `jmhz_*` fields, never the import, which employees
+cannot read. The totals in it come from the JMHZ report even when HR accepted a mismatch. Slips
+created by an older version have no such data and print as before; to add it, cancel the import
+and import the month again with its report.
+
+The report and the cuts are private Files attached to the JMHZ Import, so only HR Manager can open
+them, and they stay there after the slips are submitted. They must never be sent to employees: the
+report holds the slips of everybody, and cropping a cut hides the rest of its page but does not
+remove it from the file. A new report replaces the previous one. **Smazat PDF** removes the report
+and the cuts; cancelling the import removes them too.
 
 **E-mail.** The built-in HRMS e-mail on submit stays off. `JMHZ Settings.email_mode` decides who
 gets the slip after **Odeslat pásky**: `Vypnuto` (default, nobody), `Jen testovací zaměstnanci`

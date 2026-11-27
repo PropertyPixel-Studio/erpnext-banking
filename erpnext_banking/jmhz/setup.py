@@ -75,6 +75,14 @@ CUSTOM_FIELDS = {
 		},
 		{"fieldname": "jmhz_sp_zamestnavatel", "fieldtype": "Currency", "label": "SP zaměstnavatel (10481)"},
 		{"fieldname": "jmhz_zp_zamestnavatel", "fieldtype": "Currency", "label": "ZP zaměstnavatel (10482)"},
+		{
+			# everything else the print format shows, see slip_data.py
+			"fieldname": "jmhz_slip_data",
+			"fieldtype": "Long Text",
+			"label": "Údaje úplné pásky",
+			"hidden": 1,
+			"print_hide": 1,
+		},
 	],
 	"Additional Salary": [
 		{
