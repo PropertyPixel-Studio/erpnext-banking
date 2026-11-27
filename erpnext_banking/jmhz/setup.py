@@ -83,6 +83,14 @@ CUSTOM_FIELDS = {
 			"hidden": 1,
 			"print_hide": 1,
 		},
+		# set by the banking part when the bank payment of the slip is found (salary.py)
+		{"fieldname": "banking_paid_on", "fieldtype": "Date", "label": "Vyplaceno dne"},
+		{
+			"fieldname": "banking_bank_transaction",
+			"fieldtype": "Link",
+			"label": "Bankovní transakce výplaty",
+			"options": "Bank Transaction",
+		},
 	],
 	"Additional Salary": [
 		{

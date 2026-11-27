@@ -97,18 +97,49 @@ when prefixed `re:`) in the description decides the action:
   When the bank amount differs from the invoice, the FX difference is written off on the
   Payment Entry via a `deductions` row: **563 - Kurzové ztráty** (bank charged more) or
   **663 - Kurzové zisky** (bank charged less), so the entry balances.
-- **`auto_je`** — book a no-document withdrawal (salary, bank fee) straight to an account via a
+- **`auto_je`** — book a no-document withdrawal (bank fee) straight to an account via a
   submitted **Journal Entry** (`Bank Entry`: debit the rule's `je_account` + cost center, credit
   the bank contra account **221**), then link it to the BT. Gated by **Auto Journal Entries** in
-  Fio Settings (default on). Salary rules match the counterparty account the mapper writes into
-  the description (`Protiúčet: 1000000001/0100` → 521); fees match `Poplatek` → 568.
+  Fio Settings (default on). Fees match `Poplatek` → 568. A rule can also match the counterparty
+  account the mapper writes into the description (`Protiúčet: 1000000001/0100`), but salaries
+  need no rule, see *Salary payments* below.
 - **`ignore`** — never auto-process transactions matching this pattern.
 
 Defaults (FX tolerance, loss/gain accounts, JE contra account, cost center) live in the
 **Card Payments & Rules** section of Fio Settings. A `migrate` seeds the default rules
-(FACEBK, ANTHROPIC, GOOGLE, HETZNER, salary/fee auto_je rules) — but only when the referenced
+(FACEBK, ANTHROPIC, GOOGLE, HETZNER, the fee auto_je rule) — but only when the referenced
 Supplier / Account already exists, so review **Bank Matching Rule** list after install and add
 any that were skipped.
+
+## Salary payments
+
+A withdrawal is matched to a **Salary Slip** without any rule, from what ERPNext already knows.
+Two independent signals have to agree, as for invoices:
+
+- the counterparty account is an account of the employee: bank details on the Employee
+  (`bank_ac_no`, `iban`), a **Bank Account** with party type Employee, the account on the slip,
+  or the account read from the printed slip by the JMHZ module;
+- the amount is the net pay of one submitted, not yet paid slip of that employee (±1 Kč), and
+  the date is plausible for its period (10 days before to 45 days after the period end).
+
+Exactly one slip → a Journal Entry (debit **Salary Account**, credit the bank contra account,
+remark with the period and the slip, no name or account) linked to the BT, and the slip gets
+`Vyplaceno dne` and the bank transaction. Leading zeros, an empty prefix and a Czech IBAN are
+all read as the same account.
+
+It works in both directions, because a slip is often submitted after its payment:
+
+- a new bank transaction looks for its slip (nightly sync and re-match);
+- a submitted slip looks for its payment right after the submit and again every night. If the
+  payment was already reconciled some other way, only the slip is marked as paid.
+
+Money sent to an employee's account that fits no slip (another amount, no slip yet) stays
+**Unreconciled** for a person and is never booked by a rule. Gated by **Auto-Reconcile
+Salaries** in Fio Settings (default on, needs Auto-Reconcile Outgoing).
+
+Rules of type `auto_je` with an account of a person as the pattern are no longer seeded. Rules
+of that kind that already exist keep working for accounts ERPNext does not know as an
+employee's; delete them once the employees have their accounts in ERPNext.
 
 ## Incoming fallback matching (wrong/missing VS)
 
