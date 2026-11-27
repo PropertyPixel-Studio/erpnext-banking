@@ -83,7 +83,8 @@ function add_pdf_buttons(frm) {
 	frm.add_custom_button(
 		__("Nahrát PDF pásky"),
 		() => {
-			// The summary PDF goes to a whitelisted method only, only the per-person cuts are stored.
+			// The report goes to a whitelisted method, which stores it and the per-person cuts
+			// as private files of this import (HR Manager only).
 			new frappe.ui.FileUploader({
 				method: "erpnext_banking.jmhz.api.upload_pdf",
 				doctype: "JMHZ Import",
@@ -100,7 +101,9 @@ function add_pdf_buttons(frm) {
 					if ((res.unassigned || []).length)
 						lines.push(__("Nepřiřazeno: {0}", [res.unassigned.join("; ")]));
 					if ((res.mismatch || []).length)
-						lines.push(__("Neshoda s JMHZ: {0}", [res.mismatch.join(", ")]));
+						lines.push(__("Neshoda: {0}", [res.mismatch.join(", ")]));
+					if ((res.unread || []).length)
+						lines.push(__("Některá pole se nepřečetla: {0}", [res.unread.join(", ")]));
 					frappe.msgprint(lines.join("<br>"));
 					frm.reload_doc();
 				},
@@ -165,7 +168,7 @@ function add_pdf_buttons(frm) {
 					.filter((r) => r.pdf_check === "Neshoda")
 					.map((r) => `${r.pseudonym}: ${r.pdf_check_detail || ""}`);
 				frappe.confirm(
-					__("PDF páska nesedí s JMHZ u těchto osob. Potvrzujete, že je to v pořádku?") +
+					__("PDF páska nesedí s JMHZ nebo sama se sebou u těchto osob. Potvrzujete, že je to v pořádku?") +
 						"<br><br>" +
 						names.join("<br>"),
 					() => call_import(frm, "confirm_pdf", __("Potvrzuji…"))
@@ -175,11 +178,11 @@ function add_pdf_buttons(frm) {
 		);
 	}
 
-	if ((frm.doc.rows || []).some((r) => r.slip_pdf) || pending.length) {
+	if (frm.doc.report_pdf || (frm.doc.rows || []).some((r) => r.slip_pdf) || pending.length) {
 		frm.add_custom_button(
 			__("Smazat PDF"),
 			() => {
-				frappe.confirm(__("Smazat všechny výřezy PDF pásek tohoto importu?"), () =>
+				frappe.confirm(__("Smazat sestavu a všechny výřezy PDF pásek tohoto importu?"), () =>
 					call_import(frm, "delete_pdfs", __("Mažu PDF…"))
 				);
 			},

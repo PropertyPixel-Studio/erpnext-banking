@@ -180,13 +180,29 @@ period with **Provést storno**. **Zrušit import** cancels the slips and Additi
 import; the same file can then be imported again.
 
 **Printed slips (optional).** In preview or after creating the slips, **Nahrát PDF pásky** takes
-the summary report of printed payroll slips from the payroll system. The report is processed in
-memory and never stored. Each slip is cut out, matched to a row by its amounts (the name confirms
-and breaks ties) and compared with the report in 12 fields. A mismatch blocks **Odeslat pásky**
-until HR confirms it; a manual deduction entered later is checked again. The cuts are private
-Files attached to the JMHZ Import, so only HR Manager can open them. Cropping hides the rest of the
-page but does not remove it from the file, so the cuts must never be sent to employees.
-**Smazat PDF** removes them; cancelling the import removes them too.
+the summary report of printed payroll slips from the payroll system. Each slip is cut out and
+matched to a row by its amounts (the name confirms and breaks ties). A report of another month is
+refused.
+
+The whole slip is read, not only its totals: worked time, leave, wage components, tax base and
+credits, employer payments, other payments, deductions, the way of payment. Reading is positional
+(`pdf_slips.ZONES` and `SPECS`), so it has to be measured again when the layout of the report
+changes. Twelve control fields are required; any other value that cannot be read is listed as
+unread and is never replaced by zero.
+
+Three checks, any failure blocks **Odeslat pásky** until HR confirms it:
+
+- the 12 control fields against the JMHZ report (a manual deduction entered later is checked again);
+- tax credits, average earnings, kind of employment, exempt income and employer insurance against
+  the informative values of the report, where both sides have them;
+- the internal sums of the slip: leave balance, rounded tax base, tax, advance after credits and
+  the gross wage as the sum of its components.
+
+The report and the cuts are private Files attached to the JMHZ Import, so only HR Manager can open
+them, and they stay there after the slips are submitted. They must never be sent to employees: the
+report holds the slips of everybody, and cropping a cut hides the rest of its page but does not
+remove it from the file. A new report replaces the previous one. **Smazat PDF** removes the report
+and the cuts; cancelling the import removes them too.
 
 **E-mail.** The built-in HRMS e-mail on submit stays off. `JMHZ Settings.email_mode` decides who
 gets the slip after **Odeslat pásky**: `Vypnuto` (default, nobody), `Jen testovací zaměstnanci`
