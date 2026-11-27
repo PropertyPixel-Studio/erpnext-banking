@@ -7,7 +7,8 @@ so it must never import frappe.
 Paths are dot-separated local element names. Person-level paths are relative to
 a `bezPriznaku` form, report-level paths are relative to the root `jmhz`
 element. Numbers in comments are attribute IDs from the MPSV data dictionary.
-Paths were checked against the official XSD 1.4.3.6 and 1.5.0.3.
+Paths were checked against the official XSD 1.4.3.6 and 1.5.0.3 and against the
+data dictionaries 1.4.1.6 and 1.5.0.3.
 """
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 Kind = Literal["earning", "deduction"]
+ExtraKind = Literal["amount", "quantity", "average", "code"]
 
 SCHEMA_14 = "1.4"
 SCHEMA_15 = "1.5"
@@ -172,6 +174,170 @@ INFO_PATHS = {
 	"neodpracovane_hodiny": "prubehZamestnani.neodpracovaneHodiny.hodinyNeodpracCelkem",  # 10275
 }
 INFO_ONLY_IN = {"odpracovane_dny": SCHEMA_14}
+
+# --- informative values for the full slip ---------------------------------------
+# Shown on the slip and compared with the slip printed by the payroll system. They never
+# change an amount of the slip and never block a person: an unreadable value is skipped
+# with a warning.
+#
+# Only amounts are read. The XSD keeps personal data of children and other persons next to
+# them (`prohlaseniPoplatnikaDane.zvyhodneniDetiMesic`, `rocniUhrny.vysledekRocnihoZuctovani`):
+# those elements must never get a path here. A unit test guards it.
+
+
+@dataclass(frozen=True)
+class Extra:
+	key: str  # key in `Person.extra`
+	label: str
+	jmhz_id: int
+	paths: dict[str, str]  # schema -> path relative to the form; no schema = not reported there
+	kind: ExtraKind = "amount"
+	signed: bool = False  # the XSD allows a negative value (corrections)
+
+
+def _both(path: str) -> dict[str, str]:
+	return {SCHEMA_14: path, SCHEMA_15: path}
+
+
+def _prohlaseni(element: str) -> dict[str, str]:
+	# the taxpayer declaration moved under zalohaNaDan in 1.5
+	return {
+		SCHEMA_14: f"souhrnDataZec.prohlaseniPoplatnikaDane.{element}",
+		SCHEMA_15: f"souhrnDataZec.zalohaNaDan.prohlaseniPoplatnikaDane.{element}",
+	}
+
+
+def _prispevek_14(element: str) -> dict[str, str]:
+	# 1.5 reports only the total 10417, the breakdown exists in 1.4 only
+	return {SCHEMA_14: f"souhrnDataZec.prijmy.prispevekZamestnavatele.{element}"}
+
+
+# read strictly by the parser (it explains P07), listed here for the key and the label
+OSVOBOZENE_PRIJMY = Extra("osvobozene_prijmy", "Příjmy osvobozené od daně", 10289, _both(OSVOBOZENO))
+PRUMERNY_VYDELEK = Extra(
+	"prumerny_vydelek",
+	"Průměrný hodinový výdělek",
+	10345,
+	_both("mzda.vydelek.vydelekPrumernyHod"),
+	kind="average",
+)
+# Kind of employment (code list "Druh činnosti", 10239). The report carries it directly only
+# for a person without IK MPSV (`identifikace.druhCinnosti`, next to the name and the birth
+# date), which is never read. For everybody else it is the ELDP code (10240) without its last
+# two characters: checked on all codes of the code list "Kód ELDP" of both data dictionaries.
+ELDP_SEZNAM = "pojisteni.eldpSeznam"
+ELDP = "eldp"  # repeats when the code changes during the month
+ELDP_KOD = "kod"  # 3 or 4 characters
+DRUH_CINNOSTI = Extra(
+	"druh_cinnosti", "Druh činnosti", 10240, _both(f"{ELDP_SEZNAM}.{ELDP}.{ELDP_KOD}"), kind="code"
+)
+# 1-16 or one or two capital letters
+DRUH_CINNOSTI_PATTERN = r"(?:[1-9][0-9]?|[A-Z]{1,2})"
+# the three common kinds by their usual abbreviation, the others stay as the code
+DRUH_CINNOSTI_GROUPS = (
+	("pracovní poměr", tuple("123456789")),
+	("DPČ", tuple("ABCDEFGHIJ")),
+	("DPP", ("T", "U", "V", "W", "X", "Y", "Z", "ZA", "ZB", "ZC")),
+)
+
+
+def druh_cinnosti_label(code: str) -> str:
+	return next((label for label, codes in DRUH_CINNOSTI_GROUPS if code in codes), code)
+
+
+EXTRAS: tuple[Extra, ...] = (
+	OSVOBOZENE_PRIJMY,
+	# tax credits applied in the month (amounts only)
+	Extra("sleva_poplatnik", "Sleva na poplatníka", 10299, _prohlaseni("zakladniSleva")),
+	Extra(
+		"sleva_invalidita",
+		"Sleva na invaliditu (I./II. stupeň)",
+		10300,
+		_prohlaseni("zakladniSlevaInvalidita12"),
+	),
+	Extra(
+		"sleva_invalidita_rozsirena",
+		"Sleva na invaliditu (III. stupeň)",
+		10301,
+		_prohlaseni("rozsirenaSlevaInvalidita3"),
+	),
+	Extra("sleva_ztpp", "Sleva na držitele průkazu ZTP/P", 10302, _prohlaseni("slevaZTPP")),
+	Extra(
+		"sleva_student",
+		"Sleva na studenta",
+		10565,
+		{SCHEMA_15: "souhrnDataZec.zalohaNaDan.prohlaseniPoplatnikaDane.slevaStudent.vyseSlevy"},
+	),
+	Extra("zvyhodneni_deti", "Daňové zvýhodnění na děti", 10303, _prohlaseni("danoveZvyhodneniDetiMesic")),
+	Extra("sleva_deti", "Sleva na děti", 10304, _prohlaseni("slevaDite")),
+	PRUMERNY_VYDELEK,
+	DRUH_CINNOSTI,
+	# split of 10332; the slip keeps one component "Příplatky"
+	Extra("priplatek_prescas", "Příplatek za přesčas", 10333, _both("mzda.mzdaRozpad.priplatky.prescas")),
+	Extra("priplatek_noc", "Příplatek za práci v noci", 10334, _both("mzda.mzdaRozpad.priplatky.nocni")),
+	Extra(
+		"priplatek_vikend",
+		"Příplatek za sobotu a neděli",
+		10335,
+		_both("mzda.mzdaRozpad.priplatky.sobotaNedele"),
+	),
+	Extra("priplatek_svatek", "Příplatek za svátek", 10336, _both("mzda.mzdaRozpad.priplatky.svatek")),
+	Extra(
+		"hodiny_prescas",
+		"Přesčasové hodiny",
+		10269,
+		_both("prubehZamestnani.odpracovaneHodiny.rozpad.prescas"),
+		kind="quantity",
+	),
+	# employer contributions (part of the exempt income)
+	Extra(
+		"prispevek_sporeni",
+		"Příspěvky zaměstnavatele na spoření na stáří celkem",
+		10417,
+		{
+			SCHEMA_14: "souhrnDataZec.prijmy.prispevekZamestnavatele.prispevekZelSporeniOsvob",
+			SCHEMA_15: "souhrnDataZec.prijmy.prispevekZelSporeniOsvob",
+		},
+		signed=True,
+	),
+	Extra(
+		"prispevek_dlouhodoba_pece",
+		"Příspěvek na pojištění dlouhodobé péče",
+		10418,
+		_prispevek_14("prispevekZelPojDlPece"),
+	),
+	Extra(
+		"prispevek_penzijni_pripojisteni",
+		"Příspěvek na penzijní připojištění",
+		10292,
+		_prispevek_14("prispevekPenzPripoj"),
+		signed=True,
+	),
+	Extra(
+		"prispevek_doplnkove_penzijni",
+		"Příspěvek na doplňkové penzijní spoření",
+		10293,
+		_prispevek_14("prispevekDoplnPenzPripoj"),
+		signed=True,
+	),
+	Extra(
+		"prispevek_penzijni_pojisteni",
+		"Příspěvek na penzijní pojištění",
+		10294,
+		_prispevek_14("prispevekPenzPoj"),
+		signed=True,
+	),
+	Extra(
+		"prispevek_zivotni_pojisteni",
+		"Příspěvek na životní pojištění",
+		10295,
+		_prispevek_14("prispevekZivotPoj"),
+	),
+	Extra(
+		"prispevek_dip", "Příspěvek na dlouhodobý investiční produkt", 10296, _prispevek_14("prispevekDip")
+	),
+)
+EXTRA_BY_KEY = {x.key: x for x in EXTRAS}
 
 # --- report-level paths (relative to the root) ---------------------------------
 HLAVICKA = "hlavicka"

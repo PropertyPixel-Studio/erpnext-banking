@@ -37,8 +37,19 @@ def form(
 	raw_zuct=None,
 	zaklad_dane=None,
 	vypoctena_dan=None,
+	slevy=None,
+	deti=None,
+	prispevky=None,
+	hodiny_prescas=None,
+	eldp=None,
 ):
-	"""One employment form. `rozpad` / `nahrady` / `srazky` are {element: value}."""
+	"""One employment form. `rozpad` / `nahrady` / `srazky` are {element: value}.
+
+	`slevy` are the amounts of the taxpayer declaration, `prispevky` the employer
+	contributions, both {element: value}. `deti` adds made-up personal data of a child
+	(a name and a birth number) that the parser must never read. A `priplatky` item of
+	`rozpad` may be a dict with `celkem` and the split. `eldp` is one ELDP code or a list.
+	"""
 	ident = ""
 	if ik is not None:
 		ident += f"<form:ikMpsv>{ik}</form:ikMpsv>"
@@ -50,6 +61,36 @@ def form(
 		prijmy = f"<form:zuctovanoCelkem>{raw_zuct if raw_zuct is not None else zuct}</form:zuctovanoCelkem>"
 		if osvobozeno is not None:
 			prijmy += f"<form:osvobozenoCelkem>{osvobozeno}</form:osvobozenoCelkem>"
+		if prispevky is not None:
+			items = "".join(f"<form:{k}>{v}</form:{k}>" for k, v in prispevky.items())
+			# 1.5 has only the total, directly under prijmy
+			prijmy += (
+				items
+				if ver == "1.5"
+				else f"<form:prispevekZamestnavatele>{items}</form:prispevekZamestnavatele>"
+			)
+		# taxpayer declaration: under souhrnDataZec in 1.4, under zalohaNaDan in 1.5
+		prohlaseni_dane = ""
+		if slevy is not None or deti is not None:
+			items = ""
+			for k, v in (slevy or {}).items():
+				items += (
+					f"<form:slevaStudent><form:vyseSlevy>{v}</form:vyseSlevy>"
+					"<form:doktorant>false</form:doktorant></form:slevaStudent>"
+					if k == "slevaStudent"
+					else f"<form:{k}>{v}</form:{k}>"
+				)
+			if deti is not None:
+				jmeno, prijmeni, rodne_cislo = deti
+				items += (
+					"<form:zvyhodneniDetiMesic><form:vyzivujeJinaOsoba>false</form:vyzivujeJinaOsoba>"
+					"<form:vyzivovaneDeti><form:vyzivovaneDite><form:dite>"
+					f"<form:jmeno>{jmeno}</form:jmeno><form:prijmeni>{prijmeni}</form:prijmeni>"
+					f"<form:rodneCislo>{rodne_cislo}</form:rodneCislo></form:dite>"
+					"<form:prukazZtpp>false</form:prukazZtpp><form:poradi>1</form:poradi>"
+					"</form:vyzivovaneDite></form:vyzivovaneDeti></form:zvyhodneniDetiMesic>"
+				)
+			prohlaseni_dane = f"<form:prohlaseniPoplatnikaDane>{items}</form:prohlaseniPoplatnikaDane>"
 		zaloha = ""
 		if zaklad_dane is not None:
 			zaloha += f"<form:zakladDane>{zaklad_dane}</form:zakladDane>"
@@ -59,8 +100,11 @@ def form(
 			f"<form:danZalohaPoSleve>{zal}</form:danZalohaPoSleve><form:danBonus>{bonus}</form:danBonus>"
 		)
 		zvlastni = ""
-		if srd and ver == "1.5":
-			zaloha += f"<form:srazenaDanPar6>{srd}</form:srazenaDanPar6>"
+		if ver == "1.5":
+			if srd:
+				zaloha += f"<form:srazenaDanPar6>{srd}</form:srazenaDanPar6>"
+			zaloha += prohlaseni_dane
+			prohlaseni_dane = ""
 		elif srd:
 			zvlastni = (
 				f"<form:zvlastniSazbaDane><form:srazenaDan>{srd}</form:srazenaDan></form:zvlastniSazbaDane>"
@@ -79,7 +123,7 @@ def form(
 		souhrn_xml = (
 			f"<form:souhrnDataZec><form:prijmy>{prijmy}</form:prijmy>"
 			f"<form:zalohaNaDan>{zaloha}</form:zalohaNaDan>{zvlastni}"
-			f"{prohlaseni}{rocni}"
+			f"{prohlaseni}{prohlaseni_dane}{rocni}"
 			f"<form:mzdaCista><form:mzdaCista>{cisty}</form:mzdaCista>"
 			f"<form:srazkyZeMzdyEvidovany>{str(exekuce).lower()}</form:srazkyZeMzdyEvidovany>"
 			f"<form:srazky>{srazky_xml}</form:srazky></form:mzdaCista>"
@@ -88,14 +132,30 @@ def form(
 			"</form:souhrnDataZec>"
 		)
 
+	eldp_xml = ""
+	if eldp is not None:
+		kody = [eldp] if isinstance(eldp, str) else eldp
+		eldp_xml = (
+			"<form:eldpSeznam>"
+			+ "".join(
+				f"<form:eldp><form:kod>{k}</form:kod><form:pocetDnu>28</form:pocetDnu></form:eldp>"
+				for k in kody
+			)
+			+ "</form:eldpSeznam>"
+		)
 	pojisteni = (
-		f"<form:pojisteni><form:pojisteniZamestnanec><form:socialniPojisteni>{sp}</form:socialniPojisteni></form:pojisteniZamestnanec>"
+		f"<form:pojisteni>{eldp_xml}<form:pojisteniZamestnanec><form:socialniPojisteni>{sp}</form:socialniPojisteni></form:pojisteniZamestnanec>"
 		f"<form:pojisteniZamestnavatel><form:socialniPojisteni>{sp * 3}</form:socialniPojisteni></form:pojisteniZamestnavatel></form:pojisteni>"
 	)
 
 	prubeh = ""
 	if hodiny is not None:
-		prubeh += f"<form:odpracovaneHodiny><form:pocet>{hodiny}</form:pocet></form:odpracovaneHodiny>"
+		prescas = ""
+		if hodiny_prescas is not None:
+			prescas = f"<form:rozpad><form:prescas>{hodiny_prescas}</form:prescas></form:rozpad>"
+		prubeh += (
+			f"<form:odpracovaneHodiny><form:pocet>{hodiny}</form:pocet>{prescas}</form:odpracovaneHodiny>"
+		)
 	if dny is not None and ver == "1.4":
 		prubeh += f"<form:odpracovaneDny><form:dnyOdpracovanePocet>{dny}</form:dnyOdpracovanePocet></form:odpracovaneDny>"
 	if hodiny_dovolena is not None:
@@ -110,11 +170,12 @@ def form(
 	if rozpad is not None:
 		items = ""
 		for k, v in rozpad.items():
-			items += (
-				f"<form:priplatky><form:celkem>{v}</form:celkem></form:priplatky>"
-				if k == "priplatky"
-				else f"<form:{k}>{v}</form:{k}>"
-			)
+			if k == "priplatky":
+				split = v if isinstance(v, dict) else {"celkem": v}
+				inner = "".join(f"<form:{kk}>{vv}</form:{kk}>" for kk, vv in split.items())
+				items += f"<form:priplatky>{inner}</form:priplatky>"
+			else:
+				items += f"<form:{k}>{v}</form:{k}>"
 		mzda_xml += f"<form:mzdaRozpad>{items}</form:mzdaRozpad>"
 	if nahrady is not None:
 		mzda_xml += (

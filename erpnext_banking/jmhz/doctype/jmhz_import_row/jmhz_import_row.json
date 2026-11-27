@@ -37,10 +37,16 @@
   "slip_pdf",
   "pdf_check",
   "pdf_check_detail",
+  "pdf_reviewed",
+  "pdf_reviewed_by",
+  "pdf_reviewed_on",
   "column_break_pdf",
   "email_status",
   "lines_json",
-  "pdf_fields"
+  "pdf_fields",
+  "jmhz_extra",
+  "pdf_extra",
+  "pdf_unread"
  ],
  "fields": [
   {
@@ -249,6 +255,26 @@
    "read_only": 1
   },
   {
+   "fieldname": "pdf_reviewed",
+   "fieldtype": "Check",
+   "label": "PDF páska zkontrolována",
+   "read_only": 1,
+   "default": "0"
+  },
+  {
+   "fieldname": "pdf_reviewed_by",
+   "fieldtype": "Link",
+   "options": "User",
+   "label": "Zkontroloval",
+   "read_only": 1
+  },
+  {
+   "fieldname": "pdf_reviewed_on",
+   "fieldtype": "Datetime",
+   "label": "Zkontrolováno",
+   "read_only": 1
+  },
+  {
    "fieldname": "column_break_pdf",
    "fieldtype": "Column Break"
   },
@@ -273,11 +299,32 @@
    "hidden": 1,
    "label": "Hodnoty z PDF pásky",
    "read_only": 1
+  },
+  {
+   "fieldname": "jmhz_extra",
+   "fieldtype": "JSON",
+   "hidden": 1,
+   "label": "Doplňkové údaje z JMHZ",
+   "read_only": 1
+  },
+  {
+   "fieldname": "pdf_extra",
+   "fieldtype": "JSON",
+   "hidden": 1,
+   "label": "Další hodnoty z PDF pásky",
+   "read_only": 1
+  },
+  {
+   "fieldname": "pdf_unread",
+   "fieldtype": "JSON",
+   "hidden": 1,
+   "label": "Nepřečtená pole PDF pásky",
+   "read_only": 1
   }
  ],
  "istable": 1,
  "links": [],
- "modified": "2026-11-25 22:00:00",
+ "modified": "2026-11-27 14:00:00",
  "modified_by": "Administrator",
  "module": "JMHZ",
  "name": "JMHZ Import Row",
