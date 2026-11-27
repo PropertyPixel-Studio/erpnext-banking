@@ -290,6 +290,22 @@ be posted (closed period, frozen account), **Odeslat pásky** fails as a whole a
 submitted. Payments of insurance and tax to the authorities (336 / 221, 342 / 221) are not
 matched automatically.
 
+**Slips that are already submitted.** Turning booking on affects only slips submitted from then
+on. For the older ones JMHZ Settings has **Doúčtovat odeslané pásky** (after booking is on and
+saved), optionally limited to periods ending on or after a date:
+
+- **Náhled** does the whole run and rolls it back. It shows, per period, how many slips get a new
+  accrual, what happens to their payments (settles the payable now, is moved from the expense to
+  the payable, is fine as it is, not found) and which slips cannot be booked and why (a closed
+  period, for example), plus the turnover per account of the entries that would be posted.
+- **Zaúčtovat** is offered only after a preview with something to post, and posts exactly that.
+
+Every slip is handled on its own: one that fails is reported and the others go on. A payment
+that an account rule booked to the wage expense earlier is moved to the payable once, so the
+wage ends up as an expense once, in its period. Running it again does nothing for slips that
+are done, so it is safe to repeat after a closed period is reopened or a missing payment
+arrives. Nothing is cancelled and no month has to be imported again.
+
 **Guards** (can be relaxed in JMHZ Settings where noted):
 
 - a JMHZ slip is submitted and cancelled only from its import, never directly or in bulk from the

@@ -8,7 +8,7 @@ import frappe
 
 from erpnext_banking import reconcile, salary
 from erpnext_banking.jmhz import accounting, importer, setup
-from erpnext_banking.jmhz.tests.synthetic import form
+from erpnext_banking.jmhz.tests.synthetic import form, hpp
 from erpnext_banking.jmhz.tests.test_salary_payments import ACCOUNT, NET, SALARY_ACCOUNT, SalaryPaymentCase
 
 CZECH_ACCOUNTS = {
@@ -284,3 +284,122 @@ class TestAccountRules(AccountingTestCase):
 		self.slip(pdf_extra={"ucet": "000019-0000000123/0100"})
 		self.assertEqual(salary.remove_account_rules(), 1)
 		self.assertFalse(frappe.db.exists("Bank Matching Rule", rule))
+
+
+class TestBackfill(AccountingTestCase):
+	"""Slips that were submitted while booking was off get booked afterwards."""
+
+	OTHER = ("2000000002/0300", "3000000003/0600")
+
+	def setUp(self):
+		super().setUp()
+		frappe.db.set_single_value(accounting.SETTINGS, "post_accrual", 0)
+		self.b = self.employee(bank_ac_no=self.OTHER[0])
+		self.c = self.employee(bank_ac_no=self.OTHER[1])
+		pair = {"6000000001": self.emp, "6000000002": self.b, "6000000003": self.c}
+		doc = self.import_file(*(hpp(ik=ik, ppv="92" + ik[2:]) for ik in pair), pair=pair)
+		self.create(doc)
+		importer.submit_slips(frappe.get_doc(importer.IMPORT, doc.name))
+		doc.reload()
+		self.slips = {r.employee: r.salary_slip for r in doc.rows}
+		# A: paid, booked 521 / 221 by an old account rule. B: paid, still open. C: not paid.
+		self.bt_a = self.payment()
+		reconcile._create_auto_je(
+			self.bt_a, self.settings, {"je_account": SALARY_ACCOUNT, "remark_template": "mzdy"}
+		)
+		self.bt_b = self.payment(account=self.OTHER[0])
+		frappe.db.set_single_value(accounting.SETTINGS, "post_accrual", 1)
+
+	def summary(self, result):
+		(period,) = result["periods"]
+		return {k: v for k, v in period.items() if v and k != "period"}
+
+	def test_nahled_nic_nezauctuje(self):
+		entries = frappe.db.count("Journal Entry")
+		result = accounting.backfill(dry_run=True, bank_settings=self.settings)
+		self.assertTrue(result["dry_run"])
+		self.assertEqual(
+			self.summary(result),
+			{"slips": 3, "accrual_new": 3, "payment_booked": 1, "payment_moved": 1, "payment_none": 1},
+		)
+		self.assertEqual(result["errors"], [])
+		turnover = {a["account"][:3]: (a["debit"], a["credit"]) for a in result["accounts"]}
+		self.assertEqual(
+			turnover,
+			{
+				"521": (3 * 15353, NET),  # three accruals; A is moved out of the expense
+				"524": (3 * 4655, 0),
+				"331": (3 * 1782 + 2 * NET, 3 * 15353),  # deductions, A moved in, B paid
+				"336": (0, 3 * (1782 + 4655)),
+				"221": (0, NET),  # only B leaves the bank now, A was booked before
+			},
+		)
+		# nothing was kept
+		self.assertEqual(frappe.db.count("Journal Entry"), entries)
+		self.assertEqual(self.entries(self.bt_b), ("Unreconciled", []))
+		for slip in self.slips.values():
+			self.assertEqual(
+				frappe.db.get_value("Salary Slip", slip, ["jmhz_accrual_entry", "banking_bank_transaction"]),
+				(None, None),
+			)
+
+	def test_doctovani(self):
+		preview = accounting.backfill(dry_run=True, bank_settings=self.settings)
+		result = accounting.backfill(dry_run=False, bank_settings=self.settings)
+		self.assertFalse(result["dry_run"])
+		# the preview said exactly what the run did
+		self.assertEqual((result["periods"], result["accounts"]), (preview["periods"], preview["accounts"]))
+		for slip in self.slips.values():
+			entry = frappe.db.get_value("Salary Slip", slip, "jmhz_accrual_entry")
+			self.assertEqual(str(frappe.db.get_value("Journal Entry", entry, "posting_date")), "2026-02-28")
+		# the wage is an expense once, in its period; A and B are settled, C is still owed
+		self.assertEqual(self.balance(SALARY_ACCOUNT), -3 * 15353)
+		self.assertEqual(self.balance(self.acc["331"], self.emp), 0)
+		self.assertEqual(self.balance(self.acc["331"], self.b), 0)
+		self.assertEqual(self.balance(self.acc["331"], self.c), NET)
+		self.assertEqual(self.entries(self.bt_b)[0], "Reconciled")
+		self.assertEqual(self.paid(self.slips[self.emp])[0], self.bt_a.name)
+		self.assertEqual(self.paid(self.slips[self.b])[0], self.bt_b.name)
+		self.assertEqual(self.paid(self.slips[self.c]), (None, None))
+
+		# again: nothing left to do, nothing posted twice
+		entries = frappe.db.count("Journal Entry")
+		again = accounting.backfill(dry_run=False, bank_settings=self.settings)
+		self.assertEqual(
+			self.summary(again), {"slips": 3, "accrual_existing": 3, "payment_linked": 2, "payment_none": 1}
+		)
+		self.assertEqual(again["accounts"], [])
+		self.assertEqual(frappe.db.count("Journal Entry"), entries)
+		# C is paid later: the usual matching settles the payable
+		bt_c = self.payment(account=self.OTHER[1], date="2026-03-20")
+		self.assertEqual(salary.reconcile_salary(bt_c, self.settings), "matched")
+		self.assertEqual(self.balance(self.acc["331"], self.c), 0)
+
+	def test_uzavrene_obdobi_se_ohlasi(self):
+		entries = frappe.db.count("Journal Entry")
+		frappe.db.set_value("Company", self.company, "accounts_frozen_till_date", "2026-02-28")
+		result = accounting.backfill(dry_run=False, bank_settings=self.settings)
+		self.assertEqual(self.summary(result), {"slips": 3, "errors": 3})
+		self.assertEqual({e["slip"] for e in result["errors"]}, set(self.slips.values()))
+		self.assertTrue(all(e["message"] and e["period"] == "02/2026" for e in result["errors"]))
+		# a slip that failed left nothing behind
+		self.assertEqual(frappe.db.count("Journal Entry"), entries)
+		self.assertEqual(self.entries(self.bt_b), ("Unreconciled", []))
+		self.assertEqual(frappe.get_message_log(), [])
+
+	def test_jen_od_obdobi(self):
+		result = accounting.backfill(from_date="2026-03-01", dry_run=True, bank_settings=self.settings)
+		self.assertEqual((result["periods"], result["accounts"], result["errors"]), ([], [], []))
+		result = accounting.backfill(from_date="2026-02-28", dry_run=True, bank_settings=self.settings)
+		self.assertEqual(self.summary(result)["slips"], 3)
+
+	def test_bez_banky_jen_predpis(self):
+		result = accounting.backfill(dry_run=False)  # no enabled bank provider on the test site
+		self.assertFalse(result["bank"])
+		self.assertEqual(self.summary(result), {"slips": 3, "accrual_new": 3, "payment_none": 3})
+		self.assertEqual(self.entries(self.bt_b), ("Unreconciled", []))
+
+	def test_vypnute_uctovani(self):
+		frappe.db.set_single_value(accounting.SETTINGS, "post_accrual", 0)
+		with self.assertRaises(frappe.ValidationError):
+			accounting.backfill(dry_run=True, bank_settings=self.settings)

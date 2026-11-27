@@ -129,3 +129,107 @@ def cancel_accrual(slip_name: str) -> None:
 		je = frappe.get_doc("Journal Entry", entry)
 		je.flags.ignore_permissions = True
 		je.cancel()
+
+
+# --- slips submitted before booking was turned on ---------------------------------------
+
+
+def _bank_settings(company: str):
+	"""Settings of the enabled bank provider of the company, None when there is none."""
+	from erpnext_banking.providers import iter_enabled_providers
+
+	for provider in iter_enabled_providers():
+		settings = frappe.get_single(provider.settings_doctype)
+		if settings.company == company:
+			return settings
+	return None
+
+
+def _plain_error(e: Exception) -> str:
+	from frappe.utils import strip_html
+
+	return strip_html(str(e))[:300] or type(e).__name__
+
+
+def backfill(from_date=None, dry_run: bool = True, bank_settings=None) -> dict:
+	"""Book the slips that were submitted while booking was off, and bring their payments in
+	line: an open payment is booked to the payable, a payment booked to the expense earlier is
+	moved to the payable once.
+
+	Every slip is handled on its own, in a savepoint: a slip that cannot be booked (a closed
+	period, for example) is reported and the others go on. `dry_run` does all of it and
+	rolls every slip back, so the summary shows exactly what a real run would post and where
+	it would fail. Running it again does nothing for slips that are already done.
+	"""
+	from erpnext_banking import salary
+
+	if not enabled():
+		frappe.throw(_("Nejdřív v JMHZ Settings zapněte účtování předpisu mezd."))
+	settings = frappe.get_cached_doc(SETTINGS)
+	accounts(settings)
+	bank = bank_settings or _bank_settings(settings.company)
+	filters = {"company": settings.company, "docstatus": 1, "jmhz_import": ["is", "set"]}
+	if from_date:
+		filters["end_date"] = [">=", getdate(from_date)]
+	slips = frappe.get_all(
+		"Salary Slip", filters=filters, fields=["name", "end_date"], order_by="end_date asc, name asc"
+	)
+
+	periods: dict[str, dict] = {}
+	totals: dict[str, list[float]] = {}
+	errors = []
+	# One savepoint around the whole run and one per slip. A preview keeps the effects of
+	# the earlier slips while it goes on (two slips must not claim one payment) and drops
+	# everything at the end.
+	frappe.db.savepoint("jmhz_backfill_run")
+	for row in slips:
+		period = f"{getdate(row.end_date):%m/%Y}"
+		p = periods.setdefault(
+			period,
+			{"period": period, "slips": 0, "accrual_new": 0, "accrual_existing": 0, "payment_booked": 0}
+			| {"payment_moved": 0, "payment_linked": 0, "payment_none": 0, "errors": 0},
+		)
+		p["slips"] += 1
+		frappe.db.savepoint("jmhz_backfill_slip")
+		try:
+			entries = []
+			new = not accrued(row.name)
+			if new:
+				entry = post_accrual(frappe.get_doc("Salary Slip", row.name))
+				entries += [entry] if entry else []
+			outcome, posted = salary.settle_slip(row.name, bank) if bank else ("none", [])
+			entries += posted
+			lines = (
+				frappe.get_all(
+					"Journal Entry Account",
+					filters={"parent": ["in", entries]},
+					fields=[
+						"account",
+						"debit_in_account_currency as debit",
+						"credit_in_account_currency as credit",
+					],
+				)
+				if entries
+				else []
+			)
+		except Exception as e:
+			frappe.db.rollback(save_point="jmhz_backfill_slip")
+			frappe.clear_messages()  # the reason goes into the summary, not into pop-ups
+			p["errors"] += 1
+			errors.append({"slip": row.name, "period": period, "message": _plain_error(e)})
+			continue
+		p["accrual_new" if new else "accrual_existing"] += 1
+		p[f"payment_{outcome}"] += 1
+		for li in lines:
+			total = totals.setdefault(li.account, [0.0, 0.0])
+			total[0] += flt(li.debit)
+			total[1] += flt(li.credit)
+	if dry_run:
+		frappe.db.rollback(save_point="jmhz_backfill_run")
+	return {
+		"dry_run": bool(dry_run),
+		"bank": bool(bank),
+		"periods": list(periods.values()),
+		"accounts": [{"account": a, "debit": t[0], "credit": t[1]} for a, t in sorted(totals.items())],
+		"errors": errors,
+	}

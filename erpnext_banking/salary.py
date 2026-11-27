@@ -226,8 +226,9 @@ def _payable_line(slip_name: str) -> dict | None:
 	return {"account": account, **accounting.party_fields(account, employee)}
 
 
-def _book(bt, slip: dict, settings) -> None:
-	"""Journal Entry for the payment, linked to the bank transaction, and the slip marked paid."""
+def _book(bt, slip: dict, settings) -> str:
+	"""Journal Entry for the payment, linked to the bank transaction, and the slip marked paid.
+	Returns the entry."""
 	amount = float(bt.withdrawal)
 	payable = _payable_line(slip["name"])
 	payload = journal_entry_payload(
@@ -254,6 +255,7 @@ def _book(bt, slip: dict, settings) -> None:
 	)
 	bt.save(ignore_permissions=True)
 	_mark_paid(slip["name"], bt)
+	return je.name
 
 
 # --- bank transaction -> slip --------------------------------------------------------
@@ -338,12 +340,12 @@ def match_slip(slip_name: str, settings) -> str | None:
 RECLASS_PREFIX = "přeúčtování výplaty na závazek"
 
 
-def _move_to_payable(bt, slip: dict, settings) -> None:
+def _move_to_payable(bt, slip: dict, settings) -> str | None:
 	"""The payment was booked to the wage expense and the slip now has an accrual: move it to
-	the payable (331 / 521), once per bank transaction."""
+	the payable (331 / 521), once per bank transaction. Returns the entry when one was posted."""
 	payable = _payable_line(slip["name"])
 	if not payable:
-		return
+		return None
 	expense = _expense_account(settings)
 	entries = [e.payment_entry for e in bt.payment_entries if e.payment_document == "Journal Entry"]
 	amount = float(bt.withdrawal)
@@ -353,14 +355,14 @@ def _move_to_payable(bt, slip: dict, settings) -> None:
 		limit=1,
 	)
 	if not to_expense:
-		return  # booked to the payable already, or some other way a person chose
+		return None  # booked to the payable already, or some other way a person chose
 	moved = frappe.get_all(
 		"Journal Entry",
 		filters={"docstatus": 1, "cheque_no": bt.name, "user_remark": ["like", f"{RECLASS_PREFIX}%"]},
 		limit=1,
 	)
 	if moved:
-		return
+		return None
 	cost_center = _setting(settings, "default_cost_center", DEFAULT_COST_CENTER)
 	je = frappe.get_doc(
 		{
@@ -384,6 +386,35 @@ def _move_to_payable(bt, slip: dict, settings) -> None:
 	)
 	je.insert(ignore_permissions=True)
 	je.submit()
+	return je.name
+
+
+def settle_slip(slip_name: str, settings) -> tuple[str, list[str]]:
+	"""Bring the payment of one submitted slip in line with its accrual. Used when slips that
+	are already submitted get booked afterwards (accounting.backfill).
+
+	Returns (outcome, Journal Entries posted): "booked" (an open payment was booked now),
+	"moved" (a payment booked to the expense was moved to the payable), "linked" (the payment
+	is fine as it is) or "none" (no payment found, the payable stays open). Does not commit.
+	"""
+	slip = frappe.db.get_value(
+		"Salary Slip", slip_name, [*_SLIP_FIELDS, "docstatus", "company", SLIP_TRANSACTION], as_dict=True
+	)
+	if not slip or slip.docstatus != 1 or slip.company != settings.company or float(slip.net_pay or 0) <= 0:
+		return "none", []
+	data = _slip_dict(slip)
+	if slip.get(SLIP_TRANSACTION):
+		bt = frappe.get_doc("Bank Transaction", slip.get(SLIP_TRANSACTION))
+	else:
+		payment = pick_payment(data, _payments_for(data, settings))
+		if not payment:
+			return "none", []
+		bt = frappe.get_doc("Bank Transaction", payment["name"])
+		if bt.status == "Unreconciled":
+			return "booked", [_book(bt, data, settings)]
+		_mark_paid(data["name"], bt)
+	entry = _move_to_payable(bt, data, settings)
+	return ("moved", [entry]) if entry else ("linked", [])
 
 
 def match_open_slips(settings, today=None) -> int:
