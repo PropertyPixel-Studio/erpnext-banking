@@ -690,7 +690,7 @@ def test_slozky():
 	assert all(c.component_type in ("Earning", "Deduction") for c in C.COMPONENTS)
 
 
-@pytest.mark.parametrize("module", ["parser", "model", "components", "pdf_slips"])
+@pytest.mark.parametrize("module", ["parser", "model", "components", "pdf_slips", "slip_data"])
 def test_bez_importu_frappe(module):
 	path = pathlib.Path(__file__).parents[1] / "erpnext_banking" / "jmhz" / f"{module}.py"
 	tree = ast.parse(path.read_text(encoding="utf-8"))

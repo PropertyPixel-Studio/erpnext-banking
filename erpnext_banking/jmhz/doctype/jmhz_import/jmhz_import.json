@@ -19,6 +19,7 @@
   "section_rows",
   "rows",
   "issues",
+  "report_pdf",
   "pdf_unassigned",
   "section_audit",
   "file_name",
@@ -133,6 +134,12 @@
    "read_only": 1
   },
   {
+   "fieldname": "report_pdf",
+   "fieldtype": "Attach",
+   "label": "Sestava pásek ze mzdového systému (jen pro vedení)",
+   "read_only": 1
+  },
+  {
    "fieldname": "pdf_unassigned",
    "fieldtype": "JSON",
    "hidden": 1,
@@ -195,7 +202,7 @@
   }
  ],
  "links": [],
- "modified": "2026-11-25 12:00:00",
+ "modified": "2026-11-27 13:00:00",
  "modified_by": "Administrator",
  "module": "JMHZ",
  "name": "JMHZ Import",

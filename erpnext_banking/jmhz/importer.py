@@ -253,6 +253,28 @@ def row_extra(row) -> dict | None:
 	return json.loads(row.jmhz_extra) if row.jmhz_extra else None
 
 
+def row_slip_data(row) -> str | None:
+	"""JSON for `Salary Slip.jmhz_slip_data`: what the print format shows beyond the amounts."""
+	from erpnext_banking.jmhz import pdf_import, slip_data
+
+	data = slip_data.build(
+		row_extra(row),
+		pdf_import.row_pdf_fields(row),
+		pdf_import.row_pdf_extra(row),
+		pdf_import.row_pdf_unread(row),
+		pdf_import.jmhz_values(row),
+	)
+	return None if data is None else json.dumps(data, ensure_ascii=False)
+
+
+def update_slip_data(doc) -> None:
+	"""Rewrite the data of the full slip on the draft slips of the import. A submitted slip
+	is never changed."""
+	for row in doc.rows:
+		if row.salary_slip and frappe.db.get_value("Salary Slip", row.salary_slip, "docstatus") == 0:
+			frappe.db.set_value("Salary Slip", row.salary_slip, "jmhz_slip_data", row_slip_data(row))
+
+
 def row_parser_codes(row) -> set[str]:
 	return {line.split(":", 1)[0] for line in (row.issues or "").splitlines() if line[:1] == "P"}
 
@@ -304,7 +326,7 @@ def refresh_rows(doc) -> None:
 		status, extra = row_status(doc, row, start, end)
 		row.status = status
 		row.issues = "\n".join(row_parser_issue_lines(row) + extra)
-		pdf_import.recheck(row)  # the expected pay changes with the manual deduction
+		pdf_import.recheck(row, doc.rok)  # the expected pay changes with the manual deduction
 
 
 def row_status(doc, row, start: dt.date, end: dt.date) -> tuple[str, list[str]]:
@@ -523,6 +545,7 @@ def create_slip_for_row(doc, row) -> str:
 			"jmhz_neodpracovane_hodiny": row.neodpracovane_hodiny,
 			"jmhz_sp_zamestnavatel": row.sp_zamestnavatel,
 			"jmhz_zp_zamestnavatel": row.zp_zamestnavatel,
+			"jmhz_slip_data": row_slip_data(row),
 		}
 	)
 	slip.flags.jmhz_internal = True
@@ -643,6 +666,14 @@ def submit_slips(doc) -> dict:
 		frappe.throw(
 			_("PDF páska nesedí s JMHZ u osob {0}. Zkontrolujte ji a potvrďte ručně.").format(
 				", ".join(blocked)
+			)
+		)
+	# reading a printed slip is fragile: a person has to look at every one of them
+	unreviewed = [r.pseudonym for r in doc.rows if r.salary_slip and r.slip_pdf and not r.pdf_reviewed]
+	if unreviewed:
+		frappe.throw(
+			_("PDF páska ještě nebyla zkontrolována u osob {0}. Zkontrolujte ji a potvrďte.").format(
+				", ".join(unreviewed)
 			)
 		)
 

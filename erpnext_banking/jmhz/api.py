@@ -72,14 +72,15 @@ def run_storno(name: str):
 	return importer.run_storno(_get_import(name))
 
 
-# --- printed slips from the payroll system (SPEC §6.6) -----------------------------
+# --- printed slips from the payroll system ----------------------------------------
 
 
 @frappe.whitelist(methods=["POST"])
 def upload_pdf():
 	"""Called by `upload_file` with `method` and `doctype`/`docname` of the import.
 
-	The summary PDF stays in memory and is never stored; only the per-person cuts are.
+	Frappe itself stores nothing on this path. `pdf_import.upload` keeps the report and
+	the per-person cuts as private Files of the import, for HR Manager only.
 	"""
 	from erpnext_banking.jmhz import pdf_import
 	from erpnext_banking.jmhz.pdf_slips import MAX_PDF_BYTES
@@ -108,6 +109,38 @@ def confirm_pdf(name: str):
 	from erpnext_banking.jmhz import pdf_import
 
 	return pdf_import.confirm_mismatches(_get_import(name))
+
+
+@frappe.whitelist()
+def pdf_review_data(name: str, row: str):
+	"""The cut and the values read from it, for the review dialog."""
+	from erpnext_banking.jmhz import pdf_import
+
+	_require_role()
+	doc = frappe.get_doc(importer.IMPORT, name)
+	doc.check_permission("read")
+	return pdf_import.review_data(doc, row)
+
+
+@frappe.whitelist(methods=["POST"])
+def correct_pdf(name: str, row: str, values: str | dict):
+	from erpnext_banking.jmhz import pdf_import
+
+	return pdf_import.correct(_get_import(name), row, frappe.parse_json(values))
+
+
+@frappe.whitelist(methods=["POST"])
+def review_pdf(name: str, row: str, accept_mismatch: int | str = 0):
+	from erpnext_banking.jmhz import pdf_import
+
+	return pdf_import.review(_get_import(name), row, accept_mismatch=bool(frappe.utils.cint(accept_mismatch)))
+
+
+@frappe.whitelist(methods=["POST"])
+def unreview_pdf(name: str, row: str):
+	from erpnext_banking.jmhz import pdf_import
+
+	return pdf_import.unreview(_get_import(name), row)
 
 
 @frappe.whitelist(methods=["POST"])
