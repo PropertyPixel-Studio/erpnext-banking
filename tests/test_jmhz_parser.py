@@ -427,7 +427,7 @@ def test_zpravy_neobsahuji_data():
 		cisty=100,
 		slevy={"zakladniSleva": "25701.5", "slevaDite": "-12671"},
 		prumerny_vydelek="x38219",
-		druh_cinnosti="q7q",
+		eldp="q7q++",
 	)
 	r2 = parse(report(extras))
 	assert set(r2.persons[0].issue_codes) == {"P14"}
@@ -535,7 +535,7 @@ def test_doplnkove_udaje_bez_cest_k_osobnim_udajum():
 		assert x.paths and set(x.paths) <= {"1.4", "1.5"}
 		for path in x.paths.values():
 			assert not forbidden & set(path.split(".")), path
-			assert path.split(".")[0] in ("souhrnDataZec", "mzda", "prubehZamestnani", "identifikace")
+			assert path.split(".")[0] in ("souhrnDataZec", "mzda", "prubehZamestnani", "pojisteni")
 		keys.add(x.key)
 		ids.add(x.jmhz_id)
 	assert len(keys) == len(ids) == len(C.EXTRAS)
@@ -612,19 +612,32 @@ def test_rozpad_priplatku_a_prescasy():
 
 
 def test_druh_cinnosti_a_prumerny_vydelek():
-	one = form(zuct=100, mzda=100, cisty=100, druh_cinnosti="T", prumerny_vydelek="187.125")
+	one = form(zuct=100, mzda=100, cisty=100, eldp="T++", prumerny_vydelek="187.125")
 	(p,) = parse(report(one)).persons
 	assert p.extra == {"prumerny_vydelek": 187.125, "druh_cinnosti": "T"}
 	# two employments: the codes are listed, the average only when it is the same
-	a = form(ppv="9000000001", zuct=300, mzda=100, cisty=300, druh_cinnosti="1", prumerny_vydelek=150)
-	b = form(
-		ppv="9000000002", primarni=False, souhrn=False, mzda=200, druh_cinnosti="ZA", prumerny_vydelek=200
+	a = form(ppv="9000000001", zuct=300, mzda=100, cisty=300, eldp="1D+", prumerny_vydelek=150)
+	b = form(ppv="9000000002", primarni=False, souhrn=False, mzda=200, eldp="ZA++", prumerny_vydelek=200)
+	c = form(
+		ppv="9000000003", primarni=False, souhrn=False, mzda=0, eldp=["1++", "1D+"], prumerny_vydelek=150
 	)
-	c = form(ppv="9000000003", primarni=False, souhrn=False, mzda=0, druh_cinnosti="1", prumerny_vydelek=150)
 	(p,) = parse(report(a, b, c)).persons
 	assert p.extra == {"druh_cinnosti": "1, ZA"}
 	(p,) = parse(report(a, c)).persons
 	assert p.extra == {"prumerny_vydelek": 150.0, "druh_cinnosti": "1"}
+	# the code changed during the month: both kinds are listed
+	(p,) = parse(report(form(zuct=100, mzda=100, cisty=100, eldp=["T++", "A++"]))).persons
+	assert p.extra == {"druh_cinnosti": "T, A"}
+
+
+def test_druh_cinnosti_z_alternativni_identifikace_se_necte():
+	# identifikace.druhCinnosti belongs to the identification by name and birth date
+	x = report(form(zuct=100, mzda=100, cisty=100)).replace(
+		b"</form:idPpv>", b"</form:idPpv><form:druhCinnosti>T</form:druhCinnosti>"
+	)
+	assert b"druhCinnosti" in x
+	(p,) = parse(x).persons
+	assert p.issues == [] and p.extra == {}
 
 
 @pytest.mark.parametrize(
@@ -636,14 +649,14 @@ def test_druh_cinnosti_a_prumerny_vydelek():
 		({"slevy": {"zakladniSleva": "NaN"}}, "sleva_poplatnik"),
 		({"prispevky": {"prispevekZivotPoj": -5}}, "prispevek_zivotni_pojisteni"),
 		({"prumerny_vydelek": "-1"}, "prumerny_vydelek"),
-		({"druh_cinnosti": "dpp"}, "druh_cinnosti"),
-		({"druh_cinnosti": "<b>T</b>"}, "druh_cinnosti"),
+		({"eldp": "t++"}, "druh_cinnosti"),
+		({"eldp": "++"}, "druh_cinnosti"),
+		({"eldp": "TTT++"}, "druh_cinnosti"),
+		({"eldp": ["T++", "&lt;b&gt;++"]}, "druh_cinnosti"),
 		({"hodiny": 10, "hodiny_prescas": "x"}, "hodiny_prescas"),
 	],
 )
 def test_necitelny_doplnkovy_udaj_neblokuje(kw, key):
-	if "<" in str(kw.get("druh_cinnosti", "")):
-		kw = {"druh_cinnosti": "&lt;b&gt;T&lt;/b&gt;"}
 	(p,) = parse(report(hpp(**kw))).persons
 	assert codes(p) == {"P14"}
 	assert p.blocking_issues == []

@@ -41,22 +41,20 @@ def form(
 	deti=None,
 	prispevky=None,
 	hodiny_prescas=None,
-	druh_cinnosti=None,
+	eldp=None,
 ):
 	"""One employment form. `rozpad` / `nahrady` / `srazky` are {element: value}.
 
 	`slevy` are the amounts of the taxpayer declaration, `prispevky` the employer
 	contributions, both {element: value}. `deti` adds made-up personal data of a child
 	(a name and a birth number) that the parser must never read. A `priplatky` item of
-	`rozpad` may be a dict with `celkem` and the split.
+	`rozpad` may be a dict with `celkem` and the split. `eldp` is one ELDP code or a list.
 	"""
 	ident = ""
 	if ik is not None:
 		ident += f"<form:ikMpsv>{ik}</form:ikMpsv>"
 	if ppv is not None:
 		ident += f"<form:idPpv>{ppv}</form:idPpv>"
-	if druh_cinnosti is not None:
-		ident += f"<form:druhCinnosti>{druh_cinnosti}</form:druhCinnosti>"
 
 	souhrn_xml = ""
 	if souhrn:
@@ -134,8 +132,19 @@ def form(
 			"</form:souhrnDataZec>"
 		)
 
+	eldp_xml = ""
+	if eldp is not None:
+		kody = [eldp] if isinstance(eldp, str) else eldp
+		eldp_xml = (
+			"<form:eldpSeznam>"
+			+ "".join(
+				f"<form:eldp><form:kod>{k}</form:kod><form:pocetDnu>28</form:pocetDnu></form:eldp>"
+				for k in kody
+			)
+			+ "</form:eldpSeznam>"
+		)
 	pojisteni = (
-		f"<form:pojisteni><form:pojisteniZamestnanec><form:socialniPojisteni>{sp}</form:socialniPojisteni></form:pojisteniZamestnanec>"
+		f"<form:pojisteni>{eldp_xml}<form:pojisteniZamestnanec><form:socialniPojisteni>{sp}</form:socialniPojisteni></form:pojisteniZamestnanec>"
 		f"<form:pojisteniZamestnavatel><form:socialniPojisteni>{sp * 3}</form:socialniPojisteni></form:pojisteniZamestnavatel></form:pojisteni>"
 	)
 

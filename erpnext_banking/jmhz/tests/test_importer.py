@@ -412,7 +412,7 @@ class TestRegularImport(JmhzTestCase):
 			ik=ik,
 			slevy={"zakladniSleva": 2570, "danoveZvyhodneniDetiMesic": 1267, "slevaDite": 1267},
 			deti=dite,
-			druh_cinnosti="1",
+			eldp="1++",
 			prumerny_vydelek="187.125",
 			prispevky={"prispevekZelSporeniOsvob": 1000, "prispevekDoplnPenzPripoj": 1000},
 		)
