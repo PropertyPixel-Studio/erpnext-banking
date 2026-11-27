@@ -21,10 +21,10 @@ from decimal import Decimal
 import frappe
 from frappe import _
 from frappe.core.doctype.file.utils import get_content_hash
-from frappe.utils import flt
+from frappe.utils import flt, now_datetime
 
 from erpnext_banking.jmhz import components as C
-from erpnext_banking.jmhz import importer
+from erpnext_banking.jmhz import importer, pdf_slips, slip_data
 from erpnext_banking.jmhz.pdf_slips import (
 	FIELDS,
 	PdfSlip,
@@ -219,6 +219,18 @@ def row_pdf_unread(row) -> list[str]:
 	return json.loads(row.pdf_unread or "[]")
 
 
+def row_pdf_fields(row) -> dict | None:
+	"""The 12 control fields read from the cut of the row."""
+	fields = _stored(row).get("fields")
+	return {k: Decimal(v) for k, v in fields.items()} if fields else None
+
+
+def _clear_review(row) -> None:
+	row.pdf_reviewed = 0
+	row.pdf_reviewed_by = None
+	row.pdf_reviewed_on = None
+
+
 def _fingerprint(row) -> str:
 	"""What a manual confirmation was given for: the JMHZ values and the printed values."""
 	data = {k: None if v is None else str(v) for k, v in jmhz_values(row).items()}
@@ -238,6 +250,11 @@ def _apply_check(row, fields: dict[str, Decimal], keep_confirmation: bool, rok: 
 
 
 def _set_row_pdf(doc, row, file_url: str, fields: dict[str, Decimal], extra: dict, unread: list[str]) -> None:
+	if row.slip_pdf == file_url and row.pdf_extra:
+		# The same cut again (a File is found by its content, so the same URL is the same
+		# cut): what a person corrected and confirmed stays. "Smazat PDF" starts over.
+		recheck(row, doc.rok)
+		return
 	old = row.slip_pdf
 	row.slip_pdf = file_url
 	if old and old != file_url and not _referenced(doc, old, except_row=row):
@@ -247,6 +264,7 @@ def _set_row_pdf(doc, row, file_url: str, fields: dict[str, Decimal], extra: dic
 	# cut stored by a version that read only the control fields
 	row.pdf_extra = json.dumps(extra_to_json(extra), ensure_ascii=False)
 	row.pdf_unread = json.dumps(unread)
+	_clear_review(row)
 	_apply_check(row, fields, keep_confirmation=False, rok=doc.rok)
 
 
@@ -277,6 +295,8 @@ def _save(doc) -> None:
 	doc.flags.jmhz_internal = True
 	doc.save(ignore_permissions=True)
 	doc.flags.jmhz_internal = False
+	# the draft slips print what the rows hold now
+	importer.update_slip_data(doc)
 
 
 def _check_status(doc) -> None:
@@ -386,6 +406,7 @@ def delete_all(doc, save: bool = True) -> None:
 		row.pdf_unread = None
 		row.pdf_check = BEZ_PDF
 		row.pdf_check_detail = None
+		_clear_review(row)
 	for item in _unassigned(doc):
 		_delete_file(doc, item["file_url"])
 	doc.pdf_unassigned = None
@@ -393,3 +414,148 @@ def delete_all(doc, save: bool = True) -> None:
 	doc.report_pdf = None
 	if save:
 		_save(doc)
+
+
+# --- review by a person --------------------------------------------------------------
+# Reading a printed slip is positional and fragile, and values that exist only on the
+# printed slip (leave, wage rate) have nothing to be checked against. So every row with a
+# printed slip has to be looked at and confirmed before the slips can be submitted.
+
+
+def _row(doc, row_name: str):
+	row = next((r for r in doc.rows if r.name == row_name), None)
+	if not row or not row.slip_pdf:
+		frappe.throw(_("Řádek neexistuje nebo nemá PDF pásku."))
+	return row
+
+
+def _display(value) -> str:
+	"""A number the way it is typed and printed here: decimal comma, no thousands separator."""
+	return str(value).replace(".", ",") if isinstance(value, Decimal) else str(value)
+
+
+def review_data(doc, row_name: str) -> dict:
+	"""Everything the review dialog shows for one row: the cut and the values read from it."""
+	row = _row(doc, row_name)
+	fields = row_pdf_fields(row) or {}
+	extra = row_pdf_extra(row)
+	unread = set(row_pdf_unread(row))
+	corrected = set(_stored(row).get("corrected") or [])
+	values = {**(extra or {}), **fields}
+	blocks = []
+	for group, keys in slip_data.LAYOUT.items():
+		rows = []
+		for key in keys:
+			control = key in FIELDS
+			if extra is None and not control:
+				continue  # a cut read by a version that read only the control fields
+			rows.append(
+				{
+					"key": key,
+					"label": slip_data.CAPTIONS[key],
+					"value": _display(values[key]) if key in values else "",
+					"kind": slip_data.KINDS[key],
+					"editable": not control,
+					"unread": key in unread,
+					"corrected": key in corrected,
+				}
+			)
+		if rows:
+			blocks.append({"key": group, "title": pdf_slips.GROUPS[group], "rows": rows})
+	return {
+		"row": row.name,
+		"pseudonym": row.pseudonym,
+		"employee_name": row.employee_name,
+		"slip_pdf": row.slip_pdf,
+		"pdf_check": row.pdf_check,
+		"pdf_check_detail": row.pdf_check_detail,
+		"reviewed": bool(row.pdf_reviewed),
+		"reviewed_by": row.pdf_reviewed_by,
+		"reviewed_on": str(row.pdf_reviewed_on or ""),
+		"editable": doc.status in (importer.NAHLED, importer.VYTVORENO),
+		"blocks": blocks,
+	}
+
+
+def _typed(key: str, text: str):
+	"""A value typed by HR. Raises a ValueError with no value in it."""
+	if key in pdf_slips.TEXT_KEYS:
+		value = text[: pdf_slips.MAX_TEXT]
+		if key == "ucet" and not pdf_slips.ACCOUNT.match(value):
+			raise ValueError
+		return value
+	number = pdf_slips.parse_number(text.replace(".", ","))
+	if number is None:
+		raise ValueError
+	return number
+
+
+def correct(doc, row_name: str, values: dict) -> dict:
+	"""HR fixes values that were read wrong or not at all. An empty value says "nothing is
+	printed there". The 12 control fields cannot be changed: they are checked against the
+	JMHZ report. A correction cancels the review and a manual confirmation of a mismatch."""
+	_check_status(doc)
+	row = _row(doc, row_name)
+	extra = row_pdf_extra(row)
+	if extra is None:
+		frappe.throw(_("Tuto PDF pásku načetla starší verze. Nahrajte sestavu znovu."))
+	unread = row_pdf_unread(row)
+	stored = _stored(row)
+	corrected = list(stored.get("corrected") or [])
+	changed = False
+	for key, text in (values or {}).items():
+		if key not in pdf_slips.EXTRA_KEYS:
+			frappe.throw(_("Toto pole nejde opravit."))
+		text = str(text or "").strip()
+		try:
+			value = _typed(key, text) if text else None
+		except ValueError:
+			frappe.throw(_("Pole {0}: zadaná hodnota není platná.").format(slip_data.CAPTIONS[key]))
+		if value == extra.get(key) and key not in unread:
+			continue
+		changed = True
+		if value is None:
+			extra.pop(key, None)
+		else:
+			extra[key] = value
+		if key in unread:
+			unread.remove(key)
+		if key not in corrected:
+			corrected.append(key)
+	if not changed:
+		return {"changed": False, "pdf_check": row.pdf_check}
+	stored["corrected"] = corrected
+	row.pdf_fields = json.dumps(stored)
+	row.pdf_extra = json.dumps(extra_to_json(extra), ensure_ascii=False)
+	row.pdf_unread = json.dumps(unread)
+	_clear_review(row)
+	_apply_check(row, row_pdf_fields(row), keep_confirmation=False, rok=doc.rok)
+	_save(doc)
+	return {"changed": True, "pdf_check": row.pdf_check}
+
+
+def review(doc, row_name: str, accept_mismatch: bool = False) -> dict:
+	"""HR compared the cut with the read values of one row and confirms them."""
+	_check_status(doc)
+	row = _row(doc, row_name)
+	if row.pdf_check == NESHODA:
+		if not accept_mismatch:
+			frappe.throw(
+				_("PDF páska má neshodu ({0}). Potvrďte ji spolu s kontrolou.").format(row.pdf_check_detail)
+			)
+		row.pdf_check = POTVRZENO
+		stored = _stored(row)
+		stored["confirmed"] = _fingerprint(row)
+		row.pdf_fields = json.dumps(stored)
+	row.pdf_reviewed = 1
+	row.pdf_reviewed_by = frappe.session.user
+	row.pdf_reviewed_on = now_datetime()
+	_save(doc)
+	return {"reviewed": True, "pdf_check": row.pdf_check}
+
+
+def unreview(doc, row_name: str) -> dict:
+	_check_status(doc)
+	_clear_review(_row(doc, row_name))
+	_save(doc)
+	return {"reviewed": False}

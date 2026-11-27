@@ -41,7 +41,7 @@ def jmhz_form(ik, ppv, gross=15353, sp=1091, zp=691, hours="40.5", days=5, **kw)
 	return form(**args)
 
 
-class TestPdf(JmhzTestCase):
+class PdfTestCase(JmhzTestCase):
 	def setUp(self):
 		super().setUp()
 		self.a, self.b = self.employee(), self.employee()
@@ -63,6 +63,15 @@ class TestPdf(JmhzTestCase):
 			frappe.local.uploaded_filename = None
 			frappe.form_dict.pop("docname", None)
 
+	def review_all(self, doc, accept_mismatch=False):
+		for row in frappe.get_doc(importer.IMPORT, doc.name).rows:
+			if row.slip_pdf:
+				api.review_pdf(doc.name, row.name, accept_mismatch=int(accept_mismatch))
+
+	def slip_data(self, row):
+		data = frappe.db.get_value("Salary Slip", row.salary_slip, "jmhz_slip_data")
+		return json.loads(data) if data else None
+
 	def pdf_files(self, doc):
 		return frappe.get_all(
 			"File",
@@ -78,6 +87,8 @@ class TestPdf(JmhzTestCase):
 			pair={"5000000001": self.a, "5000000002": self.b},
 		)
 
+
+class TestPdf(PdfTestCase):
 	def test_prirazeni_podle_castek(self):
 		doc = self.two_person_import()
 		files_before = frappe.db.count("File")
@@ -152,6 +163,7 @@ class TestPdf(JmhzTestCase):
 		with self.assertRaises(frappe.ValidationError):
 			importer.submit_slips(frappe.get_doc(importer.IMPORT, doc.name))
 		self.assertEqual(api.confirm_pdf(doc.name), {"confirmed": [a_row.pseudonym]})
+		self.review_all(doc)
 		self.assertTrue(importer.submit_slips(frappe.get_doc(importer.IMPORT, doc.name))["ok"])
 
 	def test_rucni_srazka_odhali_neshodu(self):
@@ -289,6 +301,7 @@ class TestPdf(JmhzTestCase):
 		self.upload(doc, report_pdf([(self.reversed_name(self.name_a), slip_values())]))
 		doc.reload()
 		self.create(doc)
+		self.review_all(doc)
 		importer.submit_slips(frappe.get_doc(importer.IMPORT, doc.name))
 		doc.reload()
 		# the report and the cut stay with the import after the slips are submitted
@@ -310,9 +323,16 @@ class TestPdf(JmhzTestCase):
 		# and no way to it from the slip the employee can read
 		slip = frappe.get_doc("Salary Slip", doc.rows[0].salary_slip)
 		self.assertTrue(frappe.has_permission("Salary Slip", "read", doc=slip))
+		self.assertTrue(json.loads(slip.jmhz_slip_data)["pdf"]["blocks"])  # the own slip is complete
 		dump = frappe.as_json(slip.as_dict())
 		for f in files:
 			self.assertNotIn(f.file_url, dump)
+		self.assertNotIn(doc.rows[0].pseudonym, dump)
+		for method in (api.pdf_review_data, api.review_pdf, api.unreview_pdf):
+			with self.assertRaises(frappe.PermissionError):
+				method(doc.name, doc.rows[0].name)
+		with self.assertRaises(frappe.PermissionError):
+			api.correct_pdf(doc.name, doc.rows[0].name, {"stravne": "1"})
 
 	def test_sestava_se_uklada_a_nahrazuje(self):
 		doc = self.two_person_import()
@@ -391,6 +411,7 @@ class TestPdf(JmhzTestCase):
 		with self.assertRaises(frappe.ValidationError):
 			importer.submit_slips(frappe.get_doc(importer.IMPORT, doc.name))
 		api.confirm_pdf(doc.name)
+		self.review_all(doc)
 		self.assertTrue(importer.submit_slips(frappe.get_doc(importer.IMPORT, doc.name))["ok"])
 
 	def test_neprectene_pole(self):
@@ -452,3 +473,247 @@ class TestPdf(JmhzTestCase):
 		self.assertEqual(row.pdf_check, pdf_import.POTVRZENO)  # the confirmation still holds
 		self.assertEqual(row.pdf_check_detail, "Hodiny - odpr.")
 		self.assertIsNone(pdf_import.row_pdf_extra(row))
+
+
+class TestPdfReview(PdfTestCase):
+	"""Review of the printed slips person by person, corrections and the data of the full slip."""
+
+	def one(self, ik="5000000020", extra=None, omit=(), **form_kw):
+		doc = self.import_file(jmhz_form(ik, "91" + ik[2:], **form_kw), pair={ik: self.a})
+		texts = slip_texts(798.7, self.reversed_name(self.name_a), slip_values(), extra=extra, omit=omit)
+		self.upload(doc, build_pdf([texts]))
+		doc.reload()
+		return doc
+
+	def test_kontrola_blokuje_odeslani(self):
+		doc = self.one()
+		row = doc.rows[0]
+		self.assertEqual((row.pdf_check, row.pdf_reviewed), (pdf_import.SHODA, 0))
+		self.assertTrue(self.create(doc)["ok"])
+		with self.assertRaises(frappe.ValidationError) as e:
+			importer.submit_slips(frappe.get_doc(importer.IMPORT, doc.name))
+		self.assertIn(row.pseudonym, str(e.exception))
+
+		self.assertEqual(
+			api.review_pdf(doc.name, row.name), {"reviewed": True, "pdf_check": pdf_import.SHODA}
+		)
+		doc.reload()
+		row = doc.rows[0]
+		self.assertEqual((row.pdf_reviewed, row.pdf_reviewed_by), (1, "Administrator"))
+		self.assertTrue(row.pdf_reviewed_on)
+		self.assertTrue(importer.submit_slips(frappe.get_doc(importer.IMPORT, doc.name))["ok"])
+		# after submitting nothing can be changed
+		for call in (
+			lambda: api.unreview_pdf(doc.name, row.name),
+			lambda: api.correct_pdf(doc.name, row.name, {"stravne": "5"}),
+		):
+			with self.assertRaises(frappe.ValidationError):
+				call()
+
+	def test_kontrolu_jde_vzit_zpet(self):
+		doc = self.one()
+		api.review_pdf(doc.name, doc.rows[0].name)
+		api.unreview_pdf(doc.name, doc.rows[0].name)
+		doc.reload()
+		row = doc.rows[0]
+		self.assertFalse(row.pdf_reviewed or row.pdf_reviewed_by or row.pdf_reviewed_on)
+
+	def test_radek_bez_pdf_nic_neblokuje(self):
+		doc = self.two_person_import()
+		self.upload(doc, report_pdf([(self.reversed_name(self.name_a), slip_values())]))
+		self.create(doc)
+		self.review_all(doc)  # only the row with a printed slip
+		doc.reload()
+		self.assertEqual([r.pdf_reviewed for r in doc.rows], [1, 0])
+		self.assertTrue(importer.submit_slips(frappe.get_doc(importer.IMPORT, doc.name))["ok"])
+		with self.assertRaises(frappe.ValidationError):
+			api.review_pdf(doc.name, doc.rows[1].name)  # nothing to review
+
+	def test_kontrola_s_neshodou(self):
+		doc = self.one(extra={"dovolena_zustatek": 70})
+		row = doc.rows[0]
+		self.assertEqual(row.pdf_check, pdf_import.NESHODA)
+		with self.assertRaises(frappe.ValidationError):
+			api.review_pdf(doc.name, row.name)  # the mismatch has to be accepted knowingly
+		res = api.review_pdf(doc.name, row.name, accept_mismatch=1)
+		self.assertEqual(res, {"reviewed": True, "pdf_check": pdf_import.POTVRZENO})
+		doc.reload()
+		doc.save(ignore_permissions=True)  # saving the preview keeps both
+		self.assertEqual((doc.rows[0].pdf_check, doc.rows[0].pdf_reviewed), (pdf_import.POTVRZENO, 1))
+		self.create(doc)
+		self.assertTrue(importer.submit_slips(frappe.get_doc(importer.IMPORT, doc.name))["ok"])
+
+	def test_oprava_hodnot(self):
+		doc = self.one(omit=("Výživné:", "Typ PP :"))
+		row = doc.rows[0]
+		api.review_pdf(doc.name, row.name)
+		res = api.correct_pdf(
+			doc.name, row.name, {"srazka_vyzivne": "1 500", "typ_pp": " DPP ", "prumer_dpn": "170,5"}
+		)
+		self.assertEqual(res, {"changed": True, "pdf_check": pdf_import.SHODA})
+		doc.reload()
+		row = doc.rows[0]
+		extra = pdf_import.row_pdf_extra(row)
+		self.assertEqual(
+			(extra["srazka_vyzivne"], extra["typ_pp"], str(extra["prumer_dpn"])), (1500, "DPP", "170.5")
+		)
+		self.assertEqual(pdf_import.row_pdf_unread(row), [])
+		self.assertEqual(row.pdf_reviewed, 0)  # a correction cancels the review
+		self.assertEqual(json.loads(row.pdf_fields)["corrected"], ["srazka_vyzivne", "typ_pp", "prumer_dpn"])
+
+		# the same values again change nothing and keep the review
+		api.review_pdf(doc.name, row.name)
+		self.assertEqual(api.correct_pdf(doc.name, row.name, {"typ_pp": "DPP"})["changed"], False)
+		doc.reload()
+		self.assertEqual(doc.rows[0].pdf_reviewed, 1)
+
+		# an empty value says "nothing is printed there"
+		api.correct_pdf(doc.name, row.name, {"srazka_vyzivne": ""})
+		doc.reload()
+		row = doc.rows[0]
+		self.assertNotIn("srazka_vyzivne", pdf_import.row_pdf_extra(row))
+		self.assertEqual(pdf_import.row_pdf_unread(row), [])
+
+	def test_oprava_se_znovu_kontroluje(self):
+		doc = self.one()
+		row = doc.rows[0]
+		res = api.correct_pdf(doc.name, row.name, {"dovolena_zustatek": "70"})
+		self.assertEqual(res["pdf_check"], pdf_import.NESHODA)
+		doc.reload()
+		self.assertEqual(doc.rows[0].pdf_check_detail, "součet: zůstatek dovolené")
+		api.review_pdf(doc.name, row.name, accept_mismatch=1)
+		# a later correction cancels the confirmation of the mismatch as well
+		res = api.correct_pdf(doc.name, row.name, {"dovolena_zustatek": "71"})
+		self.assertEqual(res["pdf_check"], pdf_import.NESHODA)
+		self.assertEqual(
+			api.correct_pdf(doc.name, row.name, {"dovolena_zustatek": "72"})["pdf_check"], pdf_import.SHODA
+		)
+
+	def test_oprava_odmitne_neplatne_hodnoty(self):
+		doc = self.one()
+		row = doc.rows[0]
+		before = row.pdf_extra
+		for values in (
+			{"hruba_mzda": "1"},  # a control field
+			{"nesmysl": "1"},
+			{"stravne": "12abc"},
+			{"ucet": "neni ucet"},
+		):
+			with self.assertRaises(frappe.ValidationError) as e:
+				api.correct_pdf(doc.name, row.name, values)
+			self.assertNotIn("12abc", str(e.exception))
+		doc.reload()
+		self.assertEqual(doc.rows[0].pdf_extra, before)
+
+	def test_data_pro_dialog(self):
+		doc = self.one(omit=("Výživné:",))
+		api.correct_pdf(doc.name, doc.rows[0].name, {"stravne": "250"})
+		data = api.pdf_review_data(doc.name, doc.rows[0].name)
+		self.assertEqual(data["slip_pdf"], doc.rows[0].slip_pdf)
+		self.assertEqual([b["key"] for b in data["blocks"]], list(pdf_import.slip_data.LAYOUT))
+		rows = {r["key"]: r for b in data["blocks"] for r in b["rows"]}
+		self.assertEqual(len(rows), 79)  # the whole form, also what is empty or unread
+		self.assertEqual(rows["srazka_vyzivne"] | {"label": ""}, {
+			"key": "srazka_vyzivne", "label": "", "value": "", "kind": "amount",
+			"editable": True, "unread": True, "corrected": False,
+		})  # fmt: skip
+		self.assertEqual((rows["stravne"]["value"], rows["stravne"]["corrected"]), ("250", True))
+		self.assertEqual((rows["hruba_mzda"]["value"], rows["hruba_mzda"]["editable"]), ("15353", False))
+		self.assertEqual(rows["hodiny"]["value"], "40,50")
+		self.assertTrue(data["editable"])
+		self.assertFalse(data["reviewed"])
+
+	def test_data_uplne_pasky(self):
+		doc = self.one(eldp="T++")
+		self.create(doc)
+		doc.reload()
+		row = doc.rows[0]
+		data = self.slip_data(row)
+		self.assertEqual(data["v"], 1)
+		blocks = {b["key"]: {r["key"]: r["value"] for r in b["rows"]} for b in data["pdf"]["blocks"]}
+		self.assertEqual(blocks["dovolena"]["dovolena_zustatek"], 72)
+		self.assertEqual(blocks["vyplata"]["typ_pp"], "DPP")
+		self.assertEqual({r["key"]: r["value"] for r in data["jmhz"]["rows"]}["druh_cinnosti"], "DPP")
+
+		# a correction is written to the draft slip
+		api.correct_pdf(doc.name, row.name, {"srazka_vyzivne": "1500", "dovolena_zustatek": ""})
+		data = self.slip_data(row)
+		blocks = {b["key"]: {r["key"]: r["value"] for r in b["rows"]} for b in data["pdf"]["blocks"]}
+		self.assertEqual(blocks["srazky"]["srazka_vyzivne"], 1500)
+		self.assertNotIn("dovolena_zustatek", blocks["dovolena"])
+
+		# without the printed slip only the values of the report stay
+		api.delete_pdfs(doc.name)
+		data = self.slip_data(row)
+		self.assertIsNone(data["pdf"])
+		self.assertTrue(data["jmhz"]["rows"])
+
+	def test_pdf_nahrane_po_vytvoreni_pasek(self):
+		ik = "5000000021"
+		doc = self.import_file(jmhz_form(ik, "9100000021"), pair={ik: self.a})
+		self.create(doc)
+		doc.reload()
+		row = doc.rows[0]
+		self.assertIsNone(self.slip_data(row)["pdf"])
+		slip_before = frappe.db.get_value("Salary Slip", row.salary_slip, ["net_pay", "gross_pay"])
+
+		self.upload(doc, report_pdf([(self.reversed_name(self.name_a), slip_values())]))
+		self.assertTrue(self.slip_data(row)["pdf"]["blocks"])
+		# only the print data changed
+		self.assertEqual(
+			frappe.db.get_value("Salary Slip", row.salary_slip, ["net_pay", "gross_pay", "docstatus"]),
+			(*slip_before, 0),
+		)
+
+		self.review_all(doc)
+		importer.submit_slips(frappe.get_doc(importer.IMPORT, doc.name))
+		submitted = frappe.db.get_value("Salary Slip", row.salary_slip, "jmhz_slip_data")
+		# a submitted slip is never rewritten
+		importer.update_slip_data(frappe.get_doc(importer.IMPORT, doc.name))
+		frappe.db.set_value("JMHZ Import Row", row.name, "pdf_extra", None)
+		importer.update_slip_data(frappe.get_doc(importer.IMPORT, doc.name))
+		self.assertEqual(frappe.db.get_value("Salary Slip", row.salary_slip, "jmhz_slip_data"), submitted)
+
+	def test_paska_bez_doplnkovych_udaju(self):
+		"""A row imported by the previous version: the slip has no extra data and prints as before."""
+		ik = "5000000022"
+		doc = self.import_file(jmhz_form(ik, "9100000022"), pair={ik: self.a})
+		doc.rows[0].db_set("jmhz_extra", None)
+		doc.reload()
+		self.create(doc)
+		doc.reload()
+		self.assertIsNone(frappe.db.get_value("Salary Slip", doc.rows[0].salary_slip, "jmhz_slip_data"))
+
+	def test_nove_pdf_zrusi_kontrolu(self):
+		doc = self.one()
+		row = doc.rows[0]
+		texts = slip_texts(798.7, self.reversed_name(self.name_a), slip_values())
+		api.correct_pdf(doc.name, row.name, {"stravne": "250"})
+		api.review_pdf(doc.name, row.name)
+		# the same report again: what a person corrected and confirmed must not be thrown away
+		self.upload(doc, build_pdf([texts]))
+		doc.reload()
+		row = doc.rows[0]
+		self.assertEqual(row.pdf_reviewed, 1)
+		self.assertEqual(pdf_import.row_pdf_extra(row)["stravne"], 250)
+
+		other = slip_texts(798.7, self.reversed_name(self.name_a), slip_values(), extra={"jine_naklady": 90})
+		self.upload(doc, build_pdf([other]))  # another report: read again, review again
+		doc.reload()
+		row = doc.rows[0]
+		self.assertEqual(row.pdf_reviewed, 0)
+		extra = pdf_import.row_pdf_extra(row)
+		self.assertEqual((extra["stravne"], extra["jine_naklady"]), (0, 90))
+		self.assertNotIn("corrected", json.loads(row.pdf_fields))
+
+	def test_vyrez_ze_starsi_verze_v_dialogu(self):
+		doc = self.one()
+		row = doc.rows[0]
+		row.db_set({"pdf_extra": None, "pdf_unread": None})
+		data = api.pdf_review_data(doc.name, row.name)
+		rows = [r for b in data["blocks"] for r in b["rows"]]
+		self.assertEqual(len(rows), 12)  # only the control fields were read then
+		self.assertFalse(any(r["editable"] for r in rows))
+		with self.assertRaises(frappe.ValidationError):
+			api.correct_pdf(doc.name, row.name, {"stravne": "1"})
+		api.review_pdf(doc.name, row.name)  # it can still be reviewed and submitted

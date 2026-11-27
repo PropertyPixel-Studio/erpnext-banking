@@ -36,6 +36,8 @@ from pypdf import PdfReader, PdfWriter
 from pypdf.errors import PdfReadError
 from pypdf.generic import ContentStream, RectangleObject
 
+from erpnext_banking.jmhz import components as C
+
 MAX_PDF_BYTES = 10 * 1024 * 1024
 MAX_PAGES = 50
 
@@ -486,7 +488,7 @@ def _text_right(texts: list[_Text], label: _Text, right: tuple[float, float]) ->
 	return candidates[0].text[:MAX_TEXT]
 
 
-_ACCOUNT = re.compile(r"^(\d{1,6}-)?\d{2,10}/\d{4}$")
+ACCOUNT = re.compile(r"^(\d{1,6}-)?\d{2,10}/\d{4}$")
 _INTEGER = re.compile(r"^\d{1,4}$")
 
 
@@ -550,7 +552,7 @@ def _read_extra(texts: list[_Text], anchor: _Text) -> tuple[dict, list[str], tup
 	zpusob = label and _text_below(texts, label, (8.0, 19.0))
 	put("zpusob_vyplaty", zpusob.rstrip(": ") if zpusob else None)
 	ucet = label and _text_below(texts, label, (20.0, 30.0))
-	put("ucet", ucet if ucet and _ACCOUNT.match(ucet) else None, blank=ucet is None)
+	put("ucet", ucet if ucet and ACCOUNT.match(ucet) else None, blank=ucet is None)
 
 	period = None
 	label = one("Výplata za měsíc:")
@@ -692,10 +694,7 @@ GROSS_PARTS = (
 )
 SUM_PREFIX = "součet: "
 # kind of employment printed on the slip -> codes of the "Druh činnosti" code list
-TYP_PP_CODES = {
-	"DPP": {"T", "U", "V", "W", "X", "Y", "Z", "ZA", "ZB", "ZC"},
-	"DPČ": set("ABCDEFGHIJ"),
-}
+TYP_PP_CODES = {label: set(codes) for label, codes in C.DRUH_CINNOSTI_GROUPS if label in ("DPP", "DPČ")}
 
 
 def extra_to_json(extra: dict) -> dict[str, str]:
