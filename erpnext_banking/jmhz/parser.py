@@ -130,8 +130,8 @@ class _Reader:
 	def flag(el: Element, path: str) -> bool:
 		return (_text(el, path) or "").lower() in ("true", "1")
 
-	def extra(self, el: Element, x: C.Extra, path: str) -> Decimal | str | None:
-		"""Informative value for the full slip. None = missing or unreadable.
+	def extra(self, el: Element, x: C.Extra, path: str) -> Decimal | None:
+		"""Informative number for the full slip. None = missing or unreadable.
 
 		Never blocks the person and never marks it invalid: the slip amounts do not depend
 		on these values. An unreadable value is reported as P14 and left out.
@@ -139,25 +139,38 @@ class _Reader:
 		t = _text(el, path)
 		if t is None:
 			return None
-		if x.kind == "code":
-			if _DRUH_CINNOSTI.fullmatch(t):
-				return t
-		else:
-			try:
-				d = Decimal(t)
-			except InvalidOperation:
-				d = None
-			whole = x.kind == "amount"
-			if (
-				d is not None
-				and d.is_finite()
-				and (x.signed or d >= 0)
-				and (not whole or d == d.to_integral_value())
-			):
-				return d
+		try:
+			d = Decimal(t)
+		except InvalidOperation:
+			d = None
+		whole = x.kind == "amount"
+		if (
+			d is not None
+			and d.is_finite()
+			and (x.signed or d >= 0)
+			and (not whole or d == d.to_integral_value())
+		):
+			return d
+		self._unreadable(x, path)
+		return None
+
+	def druhy_cinnosti(self, el: Element, path: str) -> list[str]:
+		"""Kinds of employment of one form: every ELDP code without its last two characters."""
+		seznam = _find(el, C.ELDP_SEZNAM)
+		found = []
+		for eldp in seznam if seznam is not None else ():
+			kod = _text(eldp, C.ELDP_KOD) if _local(eldp.tag) == C.ELDP else None
+			if kod is None:
+				continue
+			if 3 <= len(kod) <= 4 and _DRUH_CINNOSTI.fullmatch(kod[:-2]):
+				found.append(kod[:-2])
+			else:
+				self._unreadable(C.DRUH_CINNOSTI, path)
+		return found
+
+	def _unreadable(self, x: C.Extra, path: str) -> None:
 		self.unread.add(x.key)
 		self.add("P14", "warn", f"Doplňkový údaj {path} nejde přečíst, na pásce nebude.")
-		return None
 
 
 # --- person ------------------------------------------------------------------
@@ -268,13 +281,13 @@ def _build_person(ik: str, forms: list[_Form], schema: str, typ_podani: str, lab
 			path = x.paths.get(schema)
 			if path is None or x is C.OSVOBOZENE_PRIJMY:  # 10289 is read strictly below
 				continue
+			if x.kind == "code":
+				druhy_cinnosti += [d for d in r.druhy_cinnosti(b, path) if d not in druhy_cinnosti]
+				continue
 			v = r.extra(b, x, path)
 			if v is None:
 				continue
-			if x.kind == "code":
-				if v not in druhy_cinnosti:
-					druhy_cinnosti.append(v)
-			elif x.kind == "average":
+			if x.kind == "average":
 				prumery.append(v)
 			else:
 				extra_sums[x.key] = extra_sums.get(x.key, Decimal(0)) + v

@@ -221,10 +221,17 @@ PRUMERNY_VYDELEK = Extra(
 	_both("mzda.vydelek.vydelekPrumernyHod"),
 	kind="average",
 )
+# Kind of employment (code list "Druh činnosti", 10239). The report carries it directly only
+# for a person without IK MPSV (`identifikace.druhCinnosti`, next to the name and the birth
+# date), which is never read. For everybody else it is the ELDP code (10240) without its last
+# two characters: checked on all codes of the code list "Kód ELDP" of both data dictionaries.
+ELDP_SEZNAM = "pojisteni.eldpSeznam"
+ELDP = "eldp"  # repeats when the code changes during the month
+ELDP_KOD = "kod"  # 3 or 4 characters
 DRUH_CINNOSTI = Extra(
-	"druh_cinnosti", "Druh činnosti", 10239, _both("identifikace.druhCinnosti"), kind="code"
+	"druh_cinnosti", "Druh činnosti", 10240, _both(f"{ELDP_SEZNAM}.{ELDP}.{ELDP_KOD}"), kind="code"
 )
-# code list "Druh činnosti" of the data dictionary: 1-16 or one or two capital letters
+# 1-16 or one or two capital letters
 DRUH_CINNOSTI_PATTERN = r"(?:[1-9][0-9]?|[A-Z]{1,2})"
 
 EXTRAS: tuple[Extra, ...] = (
