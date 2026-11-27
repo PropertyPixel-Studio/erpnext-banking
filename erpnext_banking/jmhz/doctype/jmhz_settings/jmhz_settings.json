@@ -10,6 +10,16 @@
   "section_guards",
   "allow_slips_outside_import",
   "allow_payroll_entry",
+  "section_accounting",
+  "post_accrual",
+  "accrual_wage_account",
+  "accrual_employer_account",
+  "accrual_cost_center",
+  "column_break_accounting",
+  "accrual_payable_account",
+  "accrual_insurance_account",
+  "accrual_tax_account",
+  "accrual_deductions_account",
   "section_email",
   "email_mode",
   "email_test_employees"
@@ -55,6 +65,77 @@
    "label": "Povolit Payroll Entry"
   },
   {
+   "fieldname": "section_accounting",
+   "fieldtype": "Section Break",
+   "label": "Účtování mezd"
+  },
+  {
+   "default": "0",
+   "description": "Při odeslání pásek zaúčtuje předpis mezd do období pásky (521/331, 331/336, 331/342, 524/336, 331/379). Platba z banky potom jen uhradí závazek (331/221). Vypnuto: pásky se neúčtují a výplata se účtuje až při platbě rovnou do nákladů.",
+   "fieldname": "post_accrual",
+   "fieldtype": "Check",
+   "label": "Účtovat předpis mezd"
+  },
+  {
+   "description": "521",
+   "fieldname": "accrual_wage_account",
+   "fieldtype": "Link",
+   "label": "Mzdové náklady",
+   "options": "Account",
+   "mandatory_depends_on": "eval:doc.post_accrual"
+  },
+  {
+   "description": "524",
+   "fieldname": "accrual_employer_account",
+   "fieldtype": "Link",
+   "label": "Zákonné sociální pojištění",
+   "options": "Account",
+   "mandatory_depends_on": "eval:doc.post_accrual"
+  },
+  {
+   "description": "Nákladové středisko pro 521 a 524. Prázdné: výchozí středisko firmy.",
+   "fieldname": "accrual_cost_center",
+   "fieldtype": "Link",
+   "label": "Nákladové středisko",
+   "options": "Cost Center"
+  },
+  {
+   "fieldname": "column_break_accounting",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "331",
+   "fieldname": "accrual_payable_account",
+   "fieldtype": "Link",
+   "label": "Zaměstnanci",
+   "options": "Account",
+   "mandatory_depends_on": "eval:doc.post_accrual"
+  },
+  {
+   "description": "336",
+   "fieldname": "accrual_insurance_account",
+   "fieldtype": "Link",
+   "label": "Zúčtování s institucemi SZ a ZP",
+   "options": "Account",
+   "mandatory_depends_on": "eval:doc.post_accrual"
+  },
+  {
+   "description": "342",
+   "fieldname": "accrual_tax_account",
+   "fieldtype": "Link",
+   "label": "Ostatní přímé daně",
+   "options": "Account",
+   "mandatory_depends_on": "eval:doc.post_accrual"
+  },
+  {
+   "description": "379",
+   "fieldname": "accrual_deductions_account",
+   "fieldtype": "Link",
+   "label": "Jiné závazky (ostatní srážky)",
+   "options": "Account",
+   "mandatory_depends_on": "eval:doc.post_accrual"
+  },
+  {
    "fieldname": "section_email",
    "fieldtype": "Section Break",
    "label": "E-mail pásek"
@@ -78,7 +159,7 @@
  ],
  "issingle": 1,
  "links": [],
- "modified": "2026-11-25 12:00:00",
+ "modified": "2026-11-27 22:00:00",
  "modified_by": "Administrator",
  "module": "JMHZ",
  "name": "JMHZ Settings",

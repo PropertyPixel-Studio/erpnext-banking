@@ -6,7 +6,8 @@ of which provider created the BT. Provider-specific Settings supply gating flags
 
 Strategy per direction:
 - deposit  → Sales Invoice (variable_symbol == BT.reference_number) OR Payment Request
-- withdrawal → Purchase Invoice (layered: supplier+VS, supplier+amount+window, VS-only)
+- withdrawal → Purchase Invoice (layered: supplier+VS, supplier+amount+window, VS-only),
+  Salary Slip (account of the employee + net pay, see salary.py), Bank Matching Rule
 
 Hard rules (spec §4):
 - Tolerance: ±1 Kč (see _helpers.amount_matches).
@@ -21,6 +22,7 @@ from dataclasses import dataclass
 import frappe
 from frappe.utils import getdate
 
+from . import salary
 from ._card import (
 	build_je_remark,
 	card_window,
@@ -300,8 +302,22 @@ def _reconcile_outgoing(bt, settings) -> ReconcileResult:
 			return _try_pay_and_reconcile(bt, "Purchase Invoice", matching[0].name, amount)
 		# >1 matching → ambiguity, do not auto-reconcile
 
-	# Card / rules-engine branch: BTs with no counterparty (card payments, bank fees,
-	# salaries). Driven by Bank Matching Rule instead of supplier+VS. Runs after the
+	# Salary payments: the account of an employee and the net pay of one Salary Slip, both
+	# taken from ERPNext (salary.py). Before the rules engine: money sent to an employee
+	# that fits no slip is left for a person, never booked by a generic rule.
+	try:
+		outcome = salary.reconcile_salary(bt, settings)
+	except Exception:
+		frappe.db.rollback()
+		frappe.log_error(f"Salary payment match failed BT={bt.name}", "erpnext_banking")
+		return ReconcileResult(errors=1)
+	if outcome == "matched":
+		return ReconcileResult(matched=1)
+	if outcome == "unresolved" and not supplier:
+		return ReconcileResult(unresolved=1)
+
+	# Card / rules-engine branch: BTs with no counterparty (card payments, bank fees).
+	# Driven by Bank Matching Rule instead of supplier+VS. Runs after the
 	# supplier rules (which need a party) and before the VS-only Rule 3.
 	if not supplier:
 		r = _reconcile_by_rules(bt, settings)
@@ -620,6 +636,13 @@ def _rematch_provider(provider, settings) -> ReconcileResult:
 				f"reconcile_one failed for BT={name}",
 				"erpnext_banking",
 			)
+
+	# Pass 3: Salary Slips that still have no payment. Catches a slip submitted after its
+	# payment was reconciled some other way; then only the slip is marked as paid.
+	try:
+		totals.linked += salary.match_open_slips(settings)
+	except Exception:
+		frappe.log_error("match_open_slips failed", "erpnext_banking")
 	return totals
 
 

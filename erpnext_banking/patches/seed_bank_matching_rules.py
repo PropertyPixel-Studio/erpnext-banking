@@ -7,8 +7,11 @@ the rule can be added later.
 
 Patterns are matched case-insensitively as substrings of the Bank Transaction description
 (see erpnext_banking._card). One "GOOGLE" rule covers both "GOOGLE*WORKSPACE PROPI" and
-"Google CLOUD ...". auto_je salary rules match on the counterparty account that the Fio
-mapper writes into the description as "Protiúčet: <acc>/<bank>".
+"Google CLOUD ...".
+
+Salaries are not seeded. A salary payment is matched to its Salary Slip from the data
+ERPNext already has (the account of the employee and the net pay, see salary.py), so no
+account of a person belongs into a rule or into this file.
 """
 
 import frappe
@@ -20,10 +23,6 @@ _RULES = [
 	("ANTHROPIC", "merchant_supplier", "Anthropic, PBC", None, None, 100),
 	("GOOGLE", "merchant_supplier", "GOOGLE CLOUD EMEA LIMITED", None, None, 100),
 	("HETZNER", "merchant_supplier", "Hetzner Online GmbH", None, None, 100),
-	# Salaries → 521 (matched by counterparty account in the description)
-	("1000000001/0100", "auto_je", None, "521 - Mzdové náklady - PXG", "mzdy", 50),
-	("1000000002/0100", "auto_je", None, "521 - Mzdové náklady - PXG", "mzdy", 50),
-	("1000000003/0100", "auto_je", None, "521 - Mzdové náklady - PXG", "mzdy", 50),
 	# Bank fees → 568
 	("Poplatek", "auto_je", None, "568 - Ostatní finanční náklady - PXG", "poplatek", 100),
 ]

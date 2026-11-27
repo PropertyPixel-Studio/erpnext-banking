@@ -11,8 +11,12 @@ app_license = "MIT"
 
 required_apps = ["erpnext", "hrms"]
 
-# JMHZ module: idempotent setup of salary components, structure and settings
-after_migrate = "erpnext_banking.jmhz.setup.after_migrate"
+after_migrate = [
+	# JMHZ module: idempotent setup of salary components, structure and settings
+	"erpnext_banking.jmhz.setup.after_migrate",
+	# banking: no rule may book by an account of an employee, salaries are matched from slips
+	"erpnext_banking.salary.remove_account_rules",
+]
 
 
 scheduler_events = {
@@ -33,6 +37,8 @@ doc_events = {
 	"Payment Request": {"on_submit": "erpnext_banking.reconcile.on_payment_request_submit"},
 	# JMHZ module (SPEC §7)
 	"Salary Slip": {
+		# banking: look for the bank payment of the slip (after the submit is committed)
+		"on_submit": "erpnext_banking.salary.on_salary_slip_submit",
 		"before_submit": "erpnext_banking.jmhz.guards.salary_slip_before_submit",
 		"before_cancel": "erpnext_banking.jmhz.guards.salary_slip_before_cancel",
 		"after_delete": "erpnext_banking.jmhz.guards.scrub_deleted",

@@ -72,6 +72,22 @@ def run_storno(name: str):
 	return importer.run_storno(_get_import(name))
 
 
+# --- booking of slips that are already submitted ------------------------------------
+
+
+@frappe.whitelist(methods=["POST"])
+def accrual_backfill(from_date: str | None = None, dry_run: int | str = 1):
+	"""Preview (`dry_run`) or run the booking of slips submitted while booking was off."""
+	from erpnext_banking.jmhz import accounting
+
+	_require_role()
+	frappe.get_doc(accounting.SETTINGS).check_permission("write")
+	result = accounting.backfill(from_date or None, dry_run=bool(frappe.utils.cint(dry_run)))
+	if not result["dry_run"]:
+		frappe.db.commit()
+	return result
+
+
 # --- printed slips from the payroll system ----------------------------------------
 
 

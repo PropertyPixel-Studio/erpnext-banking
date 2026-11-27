@@ -97,18 +97,56 @@ when prefixed `re:`) in the description decides the action:
   When the bank amount differs from the invoice, the FX difference is written off on the
   Payment Entry via a `deductions` row: **563 - Kurzové ztráty** (bank charged more) or
   **663 - Kurzové zisky** (bank charged less), so the entry balances.
-- **`auto_je`** — book a no-document withdrawal (salary, bank fee) straight to an account via a
+- **`auto_je`** — book a no-document withdrawal (bank fee) straight to an account via a
   submitted **Journal Entry** (`Bank Entry`: debit the rule's `je_account` + cost center, credit
   the bank contra account **221**), then link it to the BT. Gated by **Auto Journal Entries** in
-  Fio Settings (default on). Salary rules match the counterparty account the mapper writes into
-  the description (`Protiúčet: 1000000001/0100` → 521); fees match `Poplatek` → 568.
+  Fio Settings (default on). Fees match `Poplatek` → 568. A rule can also match the counterparty
+  account the mapper writes into the description (`Protiúčet: 1000000001/0100`), but salaries
+  need no rule, see *Salary payments* below.
 - **`ignore`** — never auto-process transactions matching this pattern.
 
 Defaults (FX tolerance, loss/gain accounts, JE contra account, cost center) live in the
 **Card Payments & Rules** section of Fio Settings. A `migrate` seeds the default rules
-(FACEBK, ANTHROPIC, GOOGLE, HETZNER, salary/fee auto_je rules) — but only when the referenced
+(FACEBK, ANTHROPIC, GOOGLE, HETZNER, the fee auto_je rule) — but only when the referenced
 Supplier / Account already exists, so review **Bank Matching Rule** list after install and add
 any that were skipped.
+
+## Salary payments
+
+A withdrawal is matched to a **Salary Slip** without any rule, from what ERPNext already knows.
+Two independent signals have to agree, as for invoices:
+
+- the counterparty account is an account of the employee: bank details on the Employee
+  (`bank_ac_no`, `iban`), a **Bank Account** with party type Employee, the account on the slip,
+  or the account read from the printed slip by the JMHZ module;
+- the amount is the net pay of one submitted, not yet paid slip of that employee (±1 Kč), and
+  the date is plausible for its period (10 days before to 45 days after the period end).
+
+Exactly one slip → a Journal Entry linked to the BT (remark with the period and the slip, no
+name or account), and the slip gets `Vyplaceno dne` and the bank transaction. Leading zeros, an
+empty prefix and a Czech IBAN are all read as the same account. What the entry debits follows
+Czech bookkeeping:
+
+- the slip was booked in its period (see *Booking of salary slips* in the JMHZ module): the
+  payment settles the payable to the employee, **331 / 221**;
+- the slip was not booked: the payment goes straight to the wage expense, **521 / 221**
+  (**Salary Account** in Fio Settings).
+
+It works in both directions, because a slip is often submitted after its payment:
+
+- a new bank transaction looks for its slip (nightly sync and re-match);
+- a submitted slip looks for its payment right after the submit and again every night. If the
+  payment was already reconciled some other way, only the slip is marked as paid. If it was
+  booked to the wage expense and the slip has an accrual, it is moved to the payable once
+  (**331 / 521**), so the wage is not an expense twice.
+
+Money sent to an employee's account that fits no slip (another amount, no slip yet) stays
+**Unreconciled** for a person and is never booked by a rule. Gated by **Auto-Reconcile
+Salaries** in Fio Settings (default on, needs Auto-Reconcile Outgoing).
+
+Rules of type `auto_je` with an account of a person as the pattern are no longer seeded, and
+every `migrate` deletes such rules for accounts ERPNext knows as an employee's (master data or
+a submitted slip), permanently. A rule for an account ERPNext does not know is left alone.
 
 ## Incoming fallback matching (wrong/missing VS)
 
@@ -229,6 +267,44 @@ gets the slip after **Odeslat pásky**: `Vypnuto` (default, nobody), `Jen testov
 or `Všem` (everyone with a preferred e-mail). The same mode applies to the button on the slip and
 to the HRMS list action "Email Salary Slips". Test the e-mail on a test employee with a synthetic
 report before switching to `Všem`.
+
+**Booking of salary slips.** Off by default. With **Účtovat předpis mezd** in JMHZ Settings,
+**Odeslat pásky** also books every slip into its period (posting date = last day of the period)
+by one Journal Entry, in the same transaction:
+
+| What | Entry |
+|---|---|
+| gross wage, including wage compensations | 521 / 331 |
+| insurance withheld from the employee | 331 / 336 |
+| advance tax and withholding tax | 331 / 342 |
+| tax bonus paid with the wage | 342 / 331 |
+| other deductions | 331 / 379 |
+| insurance paid by the employer | 524 / 336 |
+
+After it the payable to the employee (331, with the Employee as the party when the account is
+of type Payable) is exactly the net pay, and the bank payment settles it (331 / 221, see
+*Salary payments*). The accounts are in JMHZ Settings; the setup prefills them by their number
+when the company has exactly one such ledger account and never overwrites them. Booking cannot
+be turned on with an account missing. Cancelling a slip cancels its entry. If the entry cannot
+be posted (closed period, frozen account), **Odeslat pásky** fails as a whole and nothing is
+submitted. Payments of insurance and tax to the authorities (336 / 221, 342 / 221) are not
+matched automatically.
+
+**Slips that are already submitted.** Turning booking on affects only slips submitted from then
+on. For the older ones JMHZ Settings has **Doúčtovat odeslané pásky** (after booking is on and
+saved), optionally limited to periods ending on or after a date:
+
+- **Náhled** does the whole run and rolls it back. It shows, per period, how many slips get a new
+  accrual, what happens to their payments (settles the payable now, is moved from the expense to
+  the payable, is fine as it is, not found) and which slips cannot be booked and why (a closed
+  period, for example), plus the turnover per account of the entries that would be posted.
+- **Zaúčtovat** is offered only after a preview with something to post, and posts exactly that.
+
+Every slip is handled on its own: one that fails is reported and the others go on. A payment
+that an account rule booked to the wage expense earlier is moved to the payable once, so the
+wage ends up as an expense once, in its period. Running it again does nothing for slips that
+are done, so it is safe to repeat after a closed period is reopened or a missing payment
+arrives. Nothing is cancelled and no month has to be imported again.
 
 **Guards** (can be relaxed in JMHZ Settings where noted):
 

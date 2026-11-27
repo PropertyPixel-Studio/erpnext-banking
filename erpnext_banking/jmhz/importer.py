@@ -16,6 +16,7 @@ import frappe
 from frappe import _
 from frappe.utils import flt, getdate, now_datetime
 
+from erpnext_banking.jmhz import accounting
 from erpnext_banking.jmhz import components as C
 from erpnext_banking.jmhz.model import JmhzParseError, ParsedFile, Person
 from erpnext_banking.jmhz.parser import parse
@@ -687,6 +688,8 @@ def submit_slips(doc) -> dict:
 			if slip.docstatus == 0:
 				slip.flags.jmhz_internal = True
 				slip.submit()
+				# the slip is booked in its period, in this transaction (off by default)
+				accounting.post_accrual(slip)
 			row.status = R_ODESLANA
 		for row in doc.rows:
 			if row.status not in (R_PRESKOCENO, R_NENAPAROVANO):
@@ -752,6 +755,7 @@ def cancel_person(imp, employee: str) -> None:
 			submitted = frappe.get_doc("Salary Slip", slip.name)
 			submitted.flags.jmhz_internal = True  # guards.salary_slip_before_cancel
 			submitted.cancel()
+			accounting.cancel_accrual(slip.name)  # after the slip: a live slip links its entry
 		else:
 			# permanently: Deleted Document would keep the amounts readable for System Manager
 			frappe.delete_doc(

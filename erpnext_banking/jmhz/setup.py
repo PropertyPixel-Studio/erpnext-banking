@@ -83,6 +83,21 @@ CUSTOM_FIELDS = {
 			"hidden": 1,
 			"print_hide": 1,
 		},
+		# the accrual of the slip, when booking is on (accounting.py)
+		{
+			"fieldname": "jmhz_accrual_entry",
+			"fieldtype": "Link",
+			"label": "Účetní předpis mzdy",
+			"options": "Journal Entry",
+		},
+		# set by the banking part when the bank payment of the slip is found (salary.py)
+		{"fieldname": "banking_paid_on", "fieldtype": "Date", "label": "Vyplaceno dne"},
+		{
+			"fieldname": "banking_bank_transaction",
+			"fieldtype": "Link",
+			"label": "Bankovní transakce výplaty",
+			"options": "Bank Transaction",
+		},
 	],
 	"Additional Salary": [
 		{
@@ -186,6 +201,16 @@ def ensure_settings() -> list[str]:
 	if not settings.email_mode:
 		settings.email_mode = "Vypnuto"
 		changed = True
+	# accounts for booking the slips: prefilled by their number in the Czech chart of
+	# accounts when the company has exactly one such account; never overwritten
+	from erpnext_banking.jmhz import accounting
+
+	for field, number in accounting.ACCOUNT_FIELDS.values():
+		if not settings.get(field):
+			account = accounting.default_account(settings.company, number)
+			if account:
+				settings.set(field, account)
+				changed = True
 	if changed:
 		# the structure may not exist yet on the first run
 		settings.flags.ignore_links = True
