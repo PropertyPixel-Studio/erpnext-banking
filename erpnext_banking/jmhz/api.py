@@ -111,6 +111,38 @@ def confirm_pdf(name: str):
 	return pdf_import.confirm_mismatches(_get_import(name))
 
 
+@frappe.whitelist()
+def pdf_review_data(name: str, row: str):
+	"""The cut and the values read from it, for the review dialog."""
+	from erpnext_banking.jmhz import pdf_import
+
+	_require_role()
+	doc = frappe.get_doc(importer.IMPORT, name)
+	doc.check_permission("read")
+	return pdf_import.review_data(doc, row)
+
+
+@frappe.whitelist(methods=["POST"])
+def correct_pdf(name: str, row: str, values: str | dict):
+	from erpnext_banking.jmhz import pdf_import
+
+	return pdf_import.correct(_get_import(name), row, frappe.parse_json(values))
+
+
+@frappe.whitelist(methods=["POST"])
+def review_pdf(name: str, row: str, accept_mismatch: int | str = 0):
+	from erpnext_banking.jmhz import pdf_import
+
+	return pdf_import.review(_get_import(name), row, accept_mismatch=bool(frappe.utils.cint(accept_mismatch)))
+
+
+@frappe.whitelist(methods=["POST"])
+def unreview_pdf(name: str, row: str):
+	from erpnext_banking.jmhz import pdf_import
+
+	return pdf_import.unreview(_get_import(name), row)
+
+
 @frappe.whitelist(methods=["POST"])
 def delete_pdfs(name: str):
 	from erpnext_banking.jmhz import pdf_import

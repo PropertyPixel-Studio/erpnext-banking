@@ -624,6 +624,8 @@ class TestDeletedDocument(JmhzTestCase):
 		data = json.loads(self.deleted("Salary Slip", slip))
 		self.assertEqual((data["earnings"], data["deductions"]), ([], []))
 		self.assertFalse(data.get("net_pay") or data.get("gross_pay") or data.get("jmhz_k_vyplate"))
+		self.assertTrue(frappe.get_meta("Salary Slip").has_field("jmhz_slip_data"))
+		self.assertFalse(data.get("jmhz_slip_data"))
 		self.assertEqual(data["employee"], emp)
 
 		frappe.delete_doc(importer.PERSON, emp)
