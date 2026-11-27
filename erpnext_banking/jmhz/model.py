@@ -55,6 +55,9 @@ class Person:
 	issues: list[Issue] = field(default_factory=list)
 	zdanitelna_mzda: int = 0  # 10297
 	vypoctena_dan: int = 0  # 10298
+	# Informative values for the full slip, keyed by `components.EXTRAS`. A missing key is
+	# zero / not reported, None is a value that could not be read (then P14).
+	extra: dict[str, int | float | str | None] = field(default_factory=dict)
 
 	@property
 	def blocking_issues(self) -> list[Issue]:

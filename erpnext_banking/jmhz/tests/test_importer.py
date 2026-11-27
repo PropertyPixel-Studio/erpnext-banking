@@ -404,6 +404,62 @@ class TestRegularImport(JmhzTestCase):
 		self.assertEqual(doc.rows[0].status, importer.R_BLOKOVANO)
 		self.assertIn("P01", doc.rows[0].issues)
 
+	def test_doplnkove_udaje_na_radku(self):
+		"""Informative values of the report are stored on the row and change nothing on the slip."""
+		ik, emp = "1000000022", self.employee()
+		dite = ("Vymyslenejmeno", "Vymysleneprijmeni", "7700112233")
+		f = hpp(
+			ik=ik,
+			slevy={"zakladniSleva": 2570, "danoveZvyhodneniDetiMesic": 1267, "slevaDite": 1267},
+			deti=dite,
+			druh_cinnosti="1",
+			prumerny_vydelek="187.125",
+			prispevky={"prispevekZelSporeniOsvob": 1000, "prispevekDoplnPenzPripoj": 1000},
+		)
+		doc = self.import_file(f, pair={ik: emp})
+		row = doc.rows[0]
+		self.assertEqual(row.status, importer.R_PRIPRAVENO)
+		self.assertEqual(
+			importer.row_extra(row),
+			{
+				"sleva_poplatnik": 2570,
+				"zvyhodneni_deti": 1267,
+				"sleva_deti": 1267,
+				"prumerny_vydelek": 187.125,
+				"druh_cinnosti": "1",
+				"prispevek_sporeni": 1000,
+				"prispevek_doplnkove_penzijni": 1000,
+			},
+		)
+		# who the children are is never stored, only the amounts
+		stored = frappe.as_json(frappe.get_doc(importer.IMPORT, doc.name).as_dict())
+		for d in dite:
+			self.assertNotIn(d, stored)
+
+		self.assertEqual(self.create(doc), {"ok": True, "created": 1})
+		slip = self.slip(doc)
+		self.assertEqual((slip.net_pay, slip.gross_pay), (13571, 15353))
+		self.assertEqual(self.slip_lines(slip), self.row_lines(doc.rows[0]))
+
+	def test_necitelny_doplnkovy_udaj_neblokuje(self):
+		ik, emp = "1000000023", self.employee()
+		doc = self.import_file(hpp(ik=ik, slevy={"zakladniSleva": "abc"}), pair={ik: emp})
+		row = doc.rows[0]
+		self.assertEqual(row.status, importer.R_PRIPRAVENO)
+		self.assertIn("P14", row.issues)
+		self.assertEqual(importer.row_extra(row), {"sleva_poplatnik": None})
+		self.assertEqual(self.create(doc), {"ok": True, "created": 1})
+
+	def test_radek_bez_doplnkovych_udaju(self):
+		ik, emp = "1000000024", self.employee()
+		doc = self.import_file(hpp(ik=ik), pair={ik: emp})
+		self.assertEqual(importer.row_extra(doc.rows[0]), {})  # read, nothing reported
+		# a row imported before the values were read: nothing is known
+		doc.rows[0].db_set("jmhz_extra", None)
+		doc.reload()
+		self.assertIsNone(importer.row_extra(doc.rows[0]))
+		self.assertEqual(self.create(doc), {"ok": True, "created": 1})
+
 	def test_import_jen_ke_cteni(self):
 		emp = self.employee()
 		doc = self.import_file(hpp(ik="1000000022"), pair={"1000000022": emp})

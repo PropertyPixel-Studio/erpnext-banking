@@ -7,8 +7,9 @@ Security:
 - input is bytes, the file is never written to disk;
 - defusedxml with `forbid_dtd=True` (no DTD, no entities, no external references);
 - size limit is checked before parsing;
-- elements about children (`zvyhodneniNaDeti`, `rocniUhrny.zvyhodneniNaDeti`) and
-  the alternative identification (name, birth date) are never read;
+- elements about children and other persons (`zvyhodneniDetiMesic`, `zvyhodneniNaDeti`,
+  `slevaNaPartnera`) and the alternative identification (name, birth date) are never
+  read, only the amounts of the tax credits next to them;
 - issue messages never contain amounts, IK MPSV or ID PPV.
 
 Persons with more employments (PPV) are merged into one person. The employee
@@ -19,6 +20,7 @@ only on the primary employment, so all balance checks are done per person.
 from __future__ import annotations
 
 import hashlib
+import re
 from decimal import Decimal, InvalidOperation
 from xml.etree.ElementTree import Element
 from xml.etree.ElementTree import ParseError as XmlParseError
@@ -32,6 +34,7 @@ from erpnext_banking.jmhz.model import Issue, JmhzParseError, Line, ParsedFile, 
 MAX_XML_BYTES = 5 * 1024 * 1024
 TYPY_PODANI = ("R", "O", "S")
 _ORDER = {c.name: i for i, c in enumerate(C.COMPONENTS)}
+_DRUH_CINNOSTI = re.compile(C.DRUH_CINNOSTI_PATTERN)
 
 
 # --- XML helpers -------------------------------------------------------------
@@ -80,6 +83,7 @@ class _Reader:
 	def __init__(self) -> None:
 		self.issues: list[Issue] = []
 		self.invalid = False  # a value was unusable -> balance checks are meaningless
+		self.unread: set[str] = set()  # keys of informative values that could not be read
 
 	def add(self, code: str, severity: str, message: str) -> None:
 		issue = Issue(code, severity, message)
@@ -125,6 +129,35 @@ class _Reader:
 	@staticmethod
 	def flag(el: Element, path: str) -> bool:
 		return (_text(el, path) or "").lower() in ("true", "1")
+
+	def extra(self, el: Element, x: C.Extra, path: str) -> Decimal | str | None:
+		"""Informative value for the full slip. None = missing or unreadable.
+
+		Never blocks the person and never marks it invalid: the slip amounts do not depend
+		on these values. An unreadable value is reported as P14 and left out.
+		"""
+		t = _text(el, path)
+		if t is None:
+			return None
+		if x.kind == "code":
+			if _DRUH_CINNOSTI.fullmatch(t):
+				return t
+		else:
+			try:
+				d = Decimal(t)
+			except InvalidOperation:
+				d = None
+			whole = x.kind == "amount"
+			if (
+				d is not None
+				and d.is_finite()
+				and (x.signed or d >= 0)
+				and (not whole or d == d.to_integral_value())
+			):
+				return d
+		self.unread.add(x.key)
+		self.add("P14", "warn", f"Doplňkový údaj {path} nejde přečíst, na pásce nebude.")
+		return None
 
 
 # --- person ------------------------------------------------------------------
@@ -177,6 +210,9 @@ def _build_person(ik: str, forms: list[_Form], schema: str, typ_podani: str, lab
 	souhrn_count = 0
 	exekuce = srazky_ozp = False
 	info: dict[str, Decimal] = {}
+	extra_sums: dict[str, Decimal] = {}
+	prumery: list[Decimal] = []
+	druhy_cinnosti: list[str] = []
 
 	for b in supported:
 		ppv = _text(b, C.ID_PPV)
@@ -227,6 +263,21 @@ def _build_person(ik: str, forms: list[_Form], schema: str, typ_podani: str, lab
 			q = r.quantity(b, path)
 			if q is not None:
 				info[key] = info.get(key, Decimal(0)) + q
+
+		for x in C.EXTRAS:
+			path = x.paths.get(schema)
+			if path is None or x is C.OSVOBOZENE_PRIJMY:  # 10289 is read strictly below
+				continue
+			v = r.extra(b, x, path)
+			if v is None:
+				continue
+			if x.kind == "code":
+				if v not in druhy_cinnosti:
+					druhy_cinnosti.append(v)
+			elif x.kind == "average":
+				prumery.append(v)
+			else:
+				extra_sums[x.key] = extra_sums.get(x.key, Decimal(0)) + v
 
 		# employee summary data, only on the primary employment
 		if _find(b, C.SOUHRN_ZEC) is not None:
@@ -309,6 +360,22 @@ def _build_person(ik: str, forms: list[_Form], schema: str, typ_podani: str, lab
 	if not has_income:
 		r.add("P11", "info", "Nulový příjem, páska se nevytváří.")
 
+	if osvobozeno:
+		extra_sums[C.OSVOBOZENE_PRIJMY.key] = Decimal(osvobozeno)
+	# an average of more employments cannot be summed: kept only when it is the same everywhere
+	if len(set(prumery)) == 1:
+		extra_sums[C.PRUMERNY_VYDELEK.key] = prumery[0]
+	extra: dict[str, int | float | str | None] = {}
+	for x in C.EXTRAS:
+		if x.key in r.unread:
+			extra[x.key] = None
+		elif x.kind == "code":
+			if druhy_cinnosti:
+				extra[x.key] = ", ".join(druhy_cinnosti)
+		elif extra_sums.get(x.key):
+			v = extra_sums[x.key]
+			extra[x.key] = int(v) if x.kind == "amount" else float(v)
+
 	return Person(
 		ik_mpsv=ik,
 		pseudonym=pseudonym(ik) if ik else label,
@@ -326,6 +393,7 @@ def _build_person(ik: str, forms: list[_Form], schema: str, typ_podani: str, lab
 		issues=r.issues,
 		zdanitelna_mzda=zaklad_dane,
 		vypoctena_dan=vypoctena_dan,
+		extra=extra,
 	)
 
 
