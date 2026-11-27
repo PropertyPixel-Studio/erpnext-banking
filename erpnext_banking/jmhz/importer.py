@@ -304,7 +304,7 @@ def refresh_rows(doc) -> None:
 		status, extra = row_status(doc, row, start, end)
 		row.status = status
 		row.issues = "\n".join(row_parser_issue_lines(row) + extra)
-		pdf_import.recheck(row)  # the expected pay changes with the manual deduction
+		pdf_import.recheck(row, doc.rok)  # the expected pay changes with the manual deduction
 
 
 def row_status(doc, row, start: dt.date, end: dt.date) -> tuple[str, list[str]]:

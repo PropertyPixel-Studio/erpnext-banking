@@ -72,14 +72,15 @@ def run_storno(name: str):
 	return importer.run_storno(_get_import(name))
 
 
-# --- printed slips from the payroll system (SPEC §6.6) -----------------------------
+# --- printed slips from the payroll system ----------------------------------------
 
 
 @frappe.whitelist(methods=["POST"])
 def upload_pdf():
 	"""Called by `upload_file` with `method` and `doctype`/`docname` of the import.
 
-	The summary PDF stays in memory and is never stored; only the per-person cuts are.
+	Frappe itself stores nothing on this path. `pdf_import.upload` keeps the report and
+	the per-person cuts as private Files of the import, for HR Manager only.
 	"""
 	from erpnext_banking.jmhz import pdf_import
 	from erpnext_banking.jmhz.pdf_slips import MAX_PDF_BYTES
